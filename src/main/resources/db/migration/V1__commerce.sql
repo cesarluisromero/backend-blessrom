@@ -1,0 +1,20 @@
+CREATE TABLE categories (id uuid PRIMARY KEY, name varchar(100) NOT NULL, slug varchar(100) NOT NULL UNIQUE);
+CREATE TABLE products (id uuid PRIMARY KEY, slug varchar(120) NOT NULL UNIQUE, version bigint NOT NULL DEFAULT 0, archived boolean NOT NULL DEFAULT false, published_revision uuid);
+CREATE TABLE product_revisions (id uuid PRIMARY KEY, product_id uuid NOT NULL REFERENCES products, content jsonb NOT NULL, created_at timestamptz NOT NULL DEFAULT now(), UNIQUE(id,product_id));
+ALTER TABLE products ADD FOREIGN KEY(published_revision,id) REFERENCES product_revisions(id,product_id);
+CREATE TABLE product_drafts (product_id uuid PRIMARY KEY REFERENCES products, content jsonb NOT NULL);
+CREATE TABLE variants (id uuid PRIMARY KEY, product_id uuid NOT NULL REFERENCES products, sku varchar(80) NOT NULL UNIQUE);
+CREATE TABLE inventory (variant_id uuid PRIMARY KEY REFERENCES variants, version bigint NOT NULL DEFAULT 0, on_hand integer NOT NULL DEFAULT 0, reserved integer NOT NULL DEFAULT 0, CHECK(on_hand>=0 AND reserved>=0 AND reserved<=on_hand));
+CREATE TABLE shipping_rates (id uuid PRIMARY KEY, version bigint NOT NULL DEFAULT 0, district_code varchar(6) NOT NULL UNIQUE CHECK(district_code ~ '^[0-9]{6}$'), district_name varchar(150) NOT NULL, amount numeric(14,2) NOT NULL CHECK(amount>=0), active boolean NOT NULL DEFAULT true);
+CREATE TABLE carts (id uuid PRIMARY KEY, token_hash varchar(64) NOT NULL, expires_at timestamptz NOT NULL, status varchar(30) NOT NULL DEFAULT 'ACTIVE' CHECK(status IN ('ACTIVE','CHECKED_OUT')));
+CREATE TABLE cart_items (cart_id uuid NOT NULL REFERENCES carts, variant_id uuid NOT NULL REFERENCES variants, quantity integer NOT NULL CHECK(quantity BETWEEN 1 AND 100), PRIMARY KEY(cart_id,variant_id));
+CREATE TABLE orders (id uuid PRIMARY KEY, cart_id uuid NOT NULL UNIQUE REFERENCES carts, idempotency_key varchar(100) NOT NULL, request_hash varchar(64) NOT NULL, token_hash varchar(64) NOT NULL, access_expires_at timestamptz NOT NULL, status varchar(30) NOT NULL DEFAULT 'PENDING_PAYMENT' CHECK(status IN ('PENDING_PAYMENT','CANCELLED','EXPIRED')), currency varchar(3) NOT NULL DEFAULT 'PEN' CHECK(currency='PEN'), subtotal numeric(14,2) NOT NULL CHECK(subtotal>=0), shipping numeric(14,2) NOT NULL CHECK(shipping>=0), total numeric(14,2) NOT NULL CHECK(total=subtotal+shipping), customer jsonb NOT NULL, created_at timestamptz NOT NULL DEFAULT now(), reservation_expires_at timestamptz NOT NULL);
+CREATE TABLE order_items (order_id uuid NOT NULL REFERENCES orders, variant_id uuid NOT NULL REFERENCES variants, sku varchar(80) NOT NULL, name varchar(180) NOT NULL, attributes jsonb NOT NULL, quantity integer NOT NULL CHECK(quantity>0), unit_price numeric(14,2) NOT NULL CHECK(unit_price>0), line_total numeric(14,2) NOT NULL CHECK(line_total=unit_price*quantity), PRIMARY KEY(order_id,variant_id));
+CREATE TABLE inventory_movements (id uuid PRIMARY KEY, variant_id uuid NOT NULL REFERENCES variants, order_id uuid REFERENCES orders, on_hand_delta integer NOT NULL, reserved_delta integer NOT NULL, reason varchar(300) NOT NULL, actor varchar(150) NOT NULL, created_at timestamptz NOT NULL DEFAULT now());
+CREATE TABLE order_history (id uuid PRIMARY KEY, order_id uuid NOT NULL REFERENCES orders, status varchar(30) NOT NULL, actor varchar(150) NOT NULL, created_at timestamptz NOT NULL DEFAULT now());
+CREATE INDEX orders_expiry ON orders(reservation_expires_at) WHERE status='PENDING_PAYMENT';
+CREATE INDEX variants_product ON variants(product_id);
+CREATE INDEX revisions_product ON product_revisions(product_id);
+CREATE INDEX movements_variant ON inventory_movements(variant_id,created_at);
+CREATE INDEX history_order ON order_history(order_id,created_at);
+

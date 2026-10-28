@@ -1,0 +1,35 @@
+services:
+  backend:
+    image: ${BLESSROM_IMAGE:?An immutable image digest is required}
+    restart: unless-stopped
+    init: true
+    env_file:
+      - path: /opt/blessrom/backend.env
+        format: raw
+    environment:
+      QUARKUS_HTTP_HOST: 0.0.0.0
+      QUARKUS_HTTP_PORT: "8080"
+    ports:
+      - "127.0.0.1:8082:8080"
+    networks:
+      - existing
+    mem_limit: 512m
+    cpus: 0.75
+    pids_limit: 200
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  existing:
+    external: true
+    name: mcp-facebook_default

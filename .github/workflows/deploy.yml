@@ -1,0 +1,184 @@
+name: Backend CI and VPS deployment
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: backend-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: blessrom
+          POSTGRES_PASSWORD: ci-test-only
+          POSTGRES_DB: blessrom_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U blessrom -d blessrom_test"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      DB_URL: jdbc:postgresql://127.0.0.1:5432/blessrom_test
+      TEST_DB_URL: jdbc:postgresql://127.0.0.1:5432/blessrom_test
+      DB_USER: blessrom
+      DB_PASSWORD: ci-test-only
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: maven
+      - name: Verify against isolated PostgreSQL
+        run: |
+          chmod +x mvnw
+          ./mvnw -B -ntp verify -Dquarkus.analytics.disabled=true
+      - name: Test reports
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: test-reports
+          path: target/surefire-reports/
+          retention-days: 7
+
+  native:
+    needs: test
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.publish.outputs.image }}
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: blessrom
+          POSTGRES_PASSWORD: ci-native-only
+          POSTGRES_DB: blessrom_native
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U blessrom -d blessrom_native"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: maven
+      - name: Compile native Linux amd64 executable
+        run: |
+          chmod +x mvnw
+          ./mvnw -B -ntp package -Dnative -DskipTests \
+            -Dquarkus.native.container-build=true \
+            -Dquarkus.native.native-image-xmx=4g \
+            -Dquarkus.native.march=compatibility \
+            -Dquarkus.analytics.disabled=true
+      - name: Create runtime image
+        run: |
+          docker build -f src/main/docker/Dockerfile.native \
+            --label "org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY" \
+            --label "org.opencontainers.image.revision=$GITHUB_SHA" \
+            -t blessrom-native:ci .
+      - name: Native smoke test with PostgreSQL and OIDC discovery
+        run: bash scripts/ci/native-smoke.sh
+      - name: Publish immutable image
+        id: publish
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          IMAGE="ghcr.io/${GITHUB_REPOSITORY,,}"
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          docker tag blessrom-native:ci "$IMAGE:$GITHUB_SHA"
+          docker push "$IMAGE:$GITHUB_SHA"
+          DIGEST=$(docker image inspect "$IMAGE:$GITHUB_SHA" --format '{{index .RepoDigests 0}}')
+          echo "image=$DIGEST" >> "$GITHUB_OUTPUT"
+          docker logout ghcr.io
+      - name: Native diagnostics
+        if: failure()
+        run: |
+          docker logs --tail 150 blessrom-native-ci 2>&1 || true
+          docker logs --tail 80 blessrom-keycloak-ci 2>&1 || true
+
+  deploy:
+    needs: native
+    if: vars.DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: production
+    permissions:
+      contents: read
+      packages: read
+    env:
+      VPS_HOST: ${{ secrets.VPS_HOST }}
+      VPS_USER: ${{ secrets.VPS_USER }}
+      VPS_PORT: ${{ secrets.VPS_PORT }}
+      DEPLOY_IMAGE: ${{ needs.native.outputs.image }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Configure SSH with verified server key
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.VPS_SSH_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          [[ "$VPS_HOST" =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]*$ ]]
+          [[ "$VPS_USER" =~ ^[a-z_][a-z0-9_-]*$ ]]
+          [[ "$VPS_PORT" =~ ^[0-9]+$ ]]
+          test -n "$SSH_PRIVATE_KEY"
+          test -n "$SSH_KNOWN_HOSTS"
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/blessrom
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/blessrom ~/.ssh/known_hosts
+          cat > ~/.ssh/config <<EOF
+          Host blessrom-vps
+            HostName $VPS_HOST
+            User $VPS_USER
+            Port $VPS_PORT
+            IdentityFile ~/.ssh/blessrom
+            IdentitiesOnly yes
+            StrictHostKeyChecking yes
+            BatchMode yes
+            ConnectTimeout 15
+          EOF
+      - name: Upload deployment files
+        run: |
+          ssh blessrom-vps "mkdir -p /opt/blessrom/releases/$GITHUB_SHA /opt/blessrom/registry-$GITHUB_RUN_ID"
+          scp deploy/compose.yaml deploy/deploy.sh "blessrom-vps:/opt/blessrom/releases/$GITHUB_SHA/"
+      - name: Authorize temporary GHCR pull
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          printf '%s' "$GHCR_TOKEN" | ssh blessrom-vps \
+            "docker --config /opt/blessrom/registry-$GITHUB_RUN_ID login ghcr.io -u '$GITHUB_ACTOR' --password-stdin"
+      - name: Back up database and deploy
+        run: |
+          [[ "$DEPLOY_IMAGE" =~ ^ghcr.io/[a-z0-9._/-]+@sha256:[a-f0-9]{64}$ ]]
+          ssh blessrom-vps \
+            "DOCKER_CONFIG=/opt/blessrom/registry-$GITHUB_RUN_ID bash /opt/blessrom/releases/$GITHUB_SHA/deploy.sh '$DEPLOY_IMAGE'"
+      - name: Remove temporary registry credentials and SSH key
+        if: always()
+        run: |
+          if test -f ~/.ssh/config; then
+            ssh blessrom-vps "rm -f /opt/blessrom/registry-$GITHUB_RUN_ID/config.json; rmdir /opt/blessrom/registry-$GITHUB_RUN_ID" || true
+          fi
+          rm -f ~/.ssh/blessrom
