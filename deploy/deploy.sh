@@ -27,7 +27,17 @@ done
 command -v curl >/dev/null
 command -v flock >/dev/null
 docker compose version
-docker network inspect mcp-facebook_default >/dev/null
+docker network inspect blessrom_backend >/dev/null
+# Fail before backup/recreation if the shared database is not attached correctly.
+DB_ALIASES=$(docker inspect --format '{{with index .NetworkSettings.Networks "blessrom_backend"}}{{range .Aliases}}{{println .}}{{end}}{{end}}' mcp-facebook-identity-db-1)
+if ! grep -Fxq 'blessrom-db' <<<"$DB_ALIASES"; then
+	echo "PostgreSQL must join blessrom_backend with alias blessrom-db. See docs/red-blessrom.md."
+	exit 1
+fi
+if ! grep -Fxq 'DB_URL=jdbc:postgresql://blessrom-db:5432/blessrom' "$ROOT/backend.env"; then
+	echo "Set DB_URL=jdbc:postgresql://blessrom-db:5432/blessrom in backend.env."
+	exit 1
+fi
 
 exec 9>"$ROOT/deploy.lock"
 flock -w 120 9 || {

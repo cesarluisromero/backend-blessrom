@@ -20,7 +20,7 @@ Ejecutar como root:
 ~~~bash
 docker compose version
 uname -m
-docker network inspect mcp-facebook_default --format '{{.Name}}'
+docker network inspect blessrom_backend --format '{{.Name}}'
 docker port mcp-facebook-identity-1
 docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' mcp-facebook-identity-1 \
   | grep -E '^KC_(HOSTNAME|HOSTNAME_ADMIN|HOSTNAME_STRICT|PROXY_HEADERS|HTTP_ENABLED)='
@@ -133,7 +133,7 @@ nano /opt/blessrom/backend.env
 Contenido (reemplazar contraseña y URL):
 
 ~~~dotenv
-DB_URL=jdbc:postgresql://mcp-facebook-identity-db-1:5432/blessrom
+DB_URL=jdbc:postgresql://blessrom-db:5432/blessrom
 DB_USER=blessrom_app
 DB_PASSWORD=TU_CONTRASENA_REAL_DE_BLESSROM_APP
 OIDC_AUTH_SERVER_URL=URL_REAL_DE_KEYCLOAK/realms/blessrom
@@ -148,7 +148,7 @@ chown blessrom-deploy:blessrom-deploy /opt/blessrom/backend.env
 chmod 600 /opt/blessrom/backend.env
 ~~~
 
-El backend usará DNS Docker, no la IP 172.19.0.4 ni el túnel de tu computadora. La red existente mcp-facebook_default debe permanecer disponible.
+El backend usará DNS Docker, no la IP 172.19.0.4 ni el túnel de tu computadora. La red externa blessrom_backend debe existir y PostgreSQL debe estar conectado con el alias blessrom-db. Antes del primer despliegue, seguir [Separación de redes](red-blessrom.md) y guardar la conexión en el Compose que administra PostgreSQL. El backend no se conecta a mcp-facebook_default.
 
 No colocar DB_PASSWORD en el YAML, en Git ni en los comandos de despliegue. El archivo del VPS es persistente y no se sobrescribe en cada actualización.
 

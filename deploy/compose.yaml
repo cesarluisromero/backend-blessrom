@@ -12,7 +12,7 @@ services:
     ports:
       - "127.0.0.1:8082:8080"
     networks:
-      - existing
+      - blessrom_backend
     mem_limit: 512m
     cpus: 0.75
     pids_limit: 200
@@ -30,6 +30,6 @@ services:
         max-file: "3"
 
 networks:
-  existing:
+  blessrom_backend:
     external: true
-    name: mcp-facebook_default
+    name: blessrom_backend
