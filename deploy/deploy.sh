@@ -61,8 +61,8 @@ compose() {
 	docker compose --project-name blessrom --env-file "$dir/image.env" -f "$dir/compose.yaml" "$@"
 }
 healthy() {
-	curl --fail --silent --max-time 5 http://127.0.0.1:8082/q/health/ready >/dev/null &&
-		curl --fail --silent --max-time 5 http://127.0.0.1:8082/api/v1/system >/dev/null
+	curl --fail --silent --max-time 5 http://127.0.0.1:18082/q/health/ready >/dev/null &&
+		curl --fail --silent --max-time 5 http://127.0.0.1:18082/api/v1/system >/dev/null
 }
 wait_healthy() {
 	for ((attempt = 1; attempt <= 90; attempt++)); do

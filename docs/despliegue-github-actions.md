@@ -220,8 +220,8 @@ El deploy puede causar una interrupción breve mientras se recrea el único cont
 
 ~~~bash
 docker ps --filter label=com.docker.compose.project=blessrom
-curl --fail http://127.0.0.1:8082/q/health/ready
-curl --fail http://127.0.0.1:8082/api/v1/system
+curl --fail http://127.0.0.1:18082/q/health/ready
+curl --fail http://127.0.0.1:18082/api/v1/system
 ~~~
 
 Salud esperada: UP. El servicio se reinicia automáticamente con Docker si el proceso o el VPS reinician, siempre que Docker esté habilitado al iniciar.
@@ -235,7 +235,7 @@ docker compose -p blessrom --env-file image.env -f compose.yaml logs --tail 100 
 
 Desde tu computadora, agregar otro túnel PuTTY:
 - Source port: 18082
-- Destination: 127.0.0.1:8082
+- Destination: 127.0.0.1:18082
 
 Abrir http://127.0.0.1:18082/api/v1/system. El puerto local 18082 evita confundir el backend del VPS con el backend de desarrollo local en 8082.
 
@@ -250,11 +250,11 @@ Mantener blessrom.com en su sitio actual. La propuesta es usar api.blessrom.com 
 Para publicar la API:
 - comprobar qué proxy utiliza actualmente el VPS;
 - crear el subdominio y un certificado TLS;
-- enrutar el proxy a 127.0.0.1:8082 (o a la red Docker si el proxy es un contenedor);
+- enrutar el proxy a 127.0.0.1:18082 (o a la red Docker si el proxy es un contenedor);
 - configurar el dominio canónico de Keycloak, sus clientes Angular y CORS;
 - validar tokens, MFA y acceso administrativo.
 
-No abrir el puerto 5432 a Internet. La primera entrega de este pipeline mantiene 8082 ligado a localhost del VPS.
+No abrir el puerto 5432 a Internet. La primera entrega de este pipeline mantiene 18082 ligado a localhost del VPS.
 
 ## Recuperación
 

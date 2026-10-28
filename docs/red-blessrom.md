@@ -93,7 +93,7 @@ Cuando el backend esté desplegado, su red debe ser solamente blessrom_backend:
 
 ~~~bash
 docker inspect --format '{{json .NetworkSettings.Networks}}' "$(docker ps -q --filter label=com.docker.compose.project=blessrom --filter label=com.docker.compose.service=backend)"
-curl --fail http://127.0.0.1:8082/q/health/ready
+curl --fail http://127.0.0.1:18082/q/health/ready
 ~~~
 
 deploy.sh verifica la conexión y el alias de PostgreSQL antes de iniciar el despliegue. No crea ni conecta redes automáticamente durante una actualización.
