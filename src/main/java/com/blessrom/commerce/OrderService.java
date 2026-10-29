@@ -66,7 +66,12 @@ public class OrderService {
         if(current!=input.version()) throw Problem.conflict("VERSION_CONFLICT","El pedido cambió; vuelve a consultarlo.");
         String from=order.get("status").toString(),to=input.status();
         if(!allowed(from,to)) throw Problem.conflict("INVALID_ORDER_TRANSITION","No se puede cambiar el pedido de "+from+" a "+to+".");
-        if("PAYMENT_CONFIRMED".equals(to)) confirmInventory(id,actor);
+        if("PAYMENT_CONFIRMED".equals(to)) {
+            var payment=db.rows("SELECT status FROM order_payments WHERE order_id=?",id);
+            if(payment.isEmpty()||!"APPROVED".equals(payment.getFirst().get("status")))
+                throw Problem.conflict("PAYMENT_NOT_APPROVED","El pago o acuerdo de pago debe aprobarse primero.");
+            confirmInventory(id,actor);
+        }
         if("CANCELLED".equals(to)) {
             release(order,to,actor);
         } else {
@@ -98,7 +103,7 @@ public class OrderService {
     }
     public Map<String,Object> list(int page,int size) {
         CatalogService.validatePage(page,size);
-        return Map.of("items",db.rows("SELECT id,version,status,currency,total,created_at,reservation_expires_at FROM orders ORDER BY created_at DESC,id LIMIT ? OFFSET ?",size,page*size),
+        return Map.of("items",db.rows("SELECT o.id,o.version,o.status,o.currency,o.total,o.created_at,o.reservation_expires_at,p.status AS payment_status,p.method AS payment_method FROM orders o LEFT JOIN order_payments p ON p.order_id=o.id ORDER BY o.created_at DESC,o.id LIMIT ? OFFSET ?",size,page*size),
             "page",page,"size",size,"total",db.one("SELECT count(*) AS n FROM orders").get("n"));
     }
     public Map<String,Object> cancel(UUID id,String token) {
@@ -121,7 +126,9 @@ public class OrderService {
             db.execute("UPDATE inventory SET reserved=reserved-?,version=version+1 WHERE variant_id=?",quantity,variant);
             inventory.movement(variant,id,0,-quantity,"Liberación: "+status,actor);
         }
-        db.execute("UPDATE orders SET status=?,version=version+1 WHERE id=?",status,id);history(id,status,actor);
+        db.execute("UPDATE orders SET status=?,version=version+1 WHERE id=?",status,id);
+        db.execute("UPDATE order_payments SET version=version+1,status='REJECTED',reviewed_at=now(),reviewed_by=?,review_note=? WHERE order_id=? AND status='SUBMITTED'",actor,"Pedido "+status.toLowerCase(Locale.ROOT),id);
+        history(id,status,actor);
     }
     private void history(UUID id,String status,String actor) {
         db.execute("INSERT INTO order_history(id,order_id,status,actor) VALUES(?,?,?,?)",UUID.randomUUID(),id,status,actor);
@@ -133,6 +140,8 @@ public class OrderService {
         for(var item:items) item.put("attributes",json.read(item.get("attributes"),Map.class));
         order.put("items",items);
         order.put("history",db.rows("SELECT status,actor,created_at FROM order_history WHERE order_id=? ORDER BY created_at,id",id));
+        var payments=db.rows("SELECT version,status,method,reference,(proof_data IS NOT NULL) AS has_proof,submitted_at,reviewed_at,reviewed_by,review_note FROM order_payments WHERE order_id=?",id);
+        order.put("payment",payments.isEmpty()?null:payments.getFirst());
         return order;
     }
 }

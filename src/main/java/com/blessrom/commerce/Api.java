@@ -23,6 +23,14 @@ public final class Api {
     public record Version(@Min(0) long version) {}
     public record OrderStatus(@Min(0) long version,
         @NotBlank @Pattern(regexp="PAYMENT_CONFIRMED|PREPARING|SHIPPED|DELIVERED|CANCELLED") String status) {}
+    public record PaymentSubmission(
+        @NotBlank @Pattern(regexp="YAPE|PLIN|BANK_TRANSFER|CASH_ON_DELIVERY") String method,
+        @Size(max=100) String reference,
+        @Size(max=30) String proofContentType,
+        @Size(max=1048576) byte[] proof) {}
+    public record PaymentReview(@Min(0) long paymentVersion,@Min(0) long orderVersion,
+        @NotBlank @Pattern(regexp="APPROVED|REJECTED") String decision,
+        @Size(max=300) String note) {}
     public record Adjustment(@Min(0) long version, @Min(-1000000) @Max(1000000) int delta,
         @NotBlank @Size(max=300) String reason) {}
     public record Rate(@NotBlank @Pattern(regexp="[0-9]{6}") String districtCode,
