@@ -60,9 +60,45 @@ public class OrderService {
         var order=db.one("SELECT token_hash,access_expires_at FROM orders WHERE id=?",id);Tokens.authorize(token,order,"access_expires_at");return view(id);
     }
     public Map<String,Object> adminGet(UUID id) { return view(id); }
+    public Map<String,Object> transition(UUID id,Api.OrderStatus input,String actor) {
+        var order=db.one("SELECT * FROM orders WHERE id=? FOR UPDATE",id);
+        long current=((Number)order.get("version")).longValue();
+        if(current!=input.version()) throw Problem.conflict("VERSION_CONFLICT","El pedido cambió; vuelve a consultarlo.");
+        String from=order.get("status").toString(),to=input.status();
+        if(!allowed(from,to)) throw Problem.conflict("INVALID_ORDER_TRANSITION","No se puede cambiar el pedido de "+from+" a "+to+".");
+        if("PAYMENT_CONFIRMED".equals(to)) confirmInventory(id,actor);
+        if("CANCELLED".equals(to)) {
+            release(order,to,actor);
+        } else {
+            int updated=db.execute("UPDATE orders SET status=?,version=version+1 WHERE id=? AND version=?",to,id,current);
+            if(updated!=1) throw Problem.conflict("VERSION_CONFLICT","El pedido cambió; vuelve a consultarlo.");
+            history(id,to,actor);
+        }
+        return view(id);
+    }
+    static boolean allowed(String from,String to) {
+        return switch(from) {
+            case "PENDING_PAYMENT" -> "PAYMENT_CONFIRMED".equals(to)||"CANCELLED".equals(to);
+            case "PAYMENT_CONFIRMED" -> "PREPARING".equals(to);
+            case "PREPARING" -> "SHIPPED".equals(to);
+            case "SHIPPED" -> "DELIVERED".equals(to);
+            default -> false;
+        };
+    }
+    private void confirmInventory(UUID id,String actor) {
+        var items=db.rows("SELECT variant_id,quantity FROM order_items WHERE order_id=? ORDER BY variant_id",id);
+        for(var item:items) {
+            UUID variant=Db.id(item,"variant_id");int quantity=Db.integer(item,"quantity");
+            var stock=db.one("SELECT * FROM inventory WHERE variant_id=? FOR UPDATE",variant);
+            if(Db.integer(stock,"on_hand")<quantity||Db.integer(stock,"reserved")<quantity)
+                throw Problem.conflict("RESERVATION_INCONSISTENT","La reserva de inventario del pedido es inconsistente.");
+            db.execute("UPDATE inventory SET on_hand=on_hand-?,reserved=reserved-?,version=version+1 WHERE variant_id=?",quantity,quantity,variant);
+            inventory.movement(variant,id,-quantity,-quantity,"Pago confirmado",actor);
+        }
+    }
     public Map<String,Object> list(int page,int size) {
         CatalogService.validatePage(page,size);
-        return Map.of("items",db.rows("SELECT id,status,currency,total,created_at,reservation_expires_at FROM orders ORDER BY created_at DESC,id LIMIT ? OFFSET ?",size,page*size),
+        return Map.of("items",db.rows("SELECT id,version,status,currency,total,created_at,reservation_expires_at FROM orders ORDER BY created_at DESC,id LIMIT ? OFFSET ?",size,page*size),
             "page",page,"size",size,"total",db.one("SELECT count(*) AS n FROM orders").get("n"));
     }
     public Map<String,Object> cancel(UUID id,String token) {
@@ -85,13 +121,13 @@ public class OrderService {
             db.execute("UPDATE inventory SET reserved=reserved-?,version=version+1 WHERE variant_id=?",quantity,variant);
             inventory.movement(variant,id,0,-quantity,"Liberación: "+status,actor);
         }
-        db.execute("UPDATE orders SET status=? WHERE id=?",status,id);history(id,status,actor);
+        db.execute("UPDATE orders SET status=?,version=version+1 WHERE id=?",status,id);history(id,status,actor);
     }
     private void history(UUID id,String status,String actor) {
         db.execute("INSERT INTO order_history(id,order_id,status,actor) VALUES(?,?,?,?)",UUID.randomUUID(),id,status,actor);
     }
     private Map<String,Object> view(UUID id) {
-        var order=db.one("SELECT id,status,currency,subtotal,shipping,total,customer,created_at,reservation_expires_at FROM orders WHERE id=?",id);
+        var order=db.one("SELECT id,version,status,currency,subtotal,shipping,total,customer,created_at,reservation_expires_at FROM orders WHERE id=?",id);
         order.put("customer",json.read(order.get("customer"),Map.class));
         var items=db.rows("SELECT variant_id,sku,name,attributes,quantity,unit_price,line_total FROM order_items WHERE order_id=? ORDER BY variant_id",id);
         for(var item:items) item.put("attributes",json.read(item.get("attributes"),Map.class));

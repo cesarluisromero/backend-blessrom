@@ -33,5 +33,6 @@ public class AdminResource {
     @PUT @Path("/shipping-rates/{id}") public Object rate(@PathParam("id") UUID id,@NotNull @Valid Api.UpdateRate input) { return shipping.update(id,input); }
     @GET @Path("/orders") public Object orders(@QueryParam("page") @DefaultValue("0") int page,@QueryParam("size") @DefaultValue("20") int size) { return orders.list(page,size); }
     @GET @Path("/orders/{id}") public Object order(@PathParam("id") UUID id) { return orders.adminGet(id); }
+    @POST @Path("/orders/{id}/status") public Object status(@PathParam("id") UUID id,@NotNull @Valid Api.OrderStatus input) { return orders.transition(id,input,identity.getPrincipal().getName()); }
 }
 

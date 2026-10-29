@@ -21,6 +21,8 @@ public final class Api {
         @NotNull @Valid Draft draft) {}
     public record UpdateDraft(@Min(0) long version, @NotNull @Valid Draft draft) {}
     public record Version(@Min(0) long version) {}
+    public record OrderStatus(@Min(0) long version,
+        @NotBlank @Pattern(regexp="PAYMENT_CONFIRMED|PREPARING|SHIPPED|DELIVERED|CANCELLED") String status) {}
     public record Adjustment(@Min(0) long version, @Min(-1000000) @Max(1000000) int delta,
         @NotBlank @Size(max=300) String reason) {}
     public record Rate(@NotBlank @Pattern(regexp="[0-9]{6}") String districtCode,
