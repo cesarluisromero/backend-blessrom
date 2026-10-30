@@ -34,40 +34,45 @@ public class MercadoPagoService {
         if(!existing.isEmpty()) {
             var payment=existing.getFirst();
             if("MERCADO_PAGO".equals(payment.get("method"))&&payment.get("checkout_url")!=null&&"PENDING_PROVIDER".equals(payment.get("status")))
-                return Map.of("preferenceId",payment.get("provider_reference"),"checkoutUrl",payment.get("checkout_url"));
+                return Map.of("orderId",payment.get("provider_reference"),"checkoutUrl",payment.get("checkout_url"));
             throw Problem.conflict("PAYMENT_ALREADY_SELECTED","El pedido ya tiene un medio de pago registrado.");
         }
         var customer=json.read(order.get("customer"),Map.class);
         String returnUrl=storeUrl.replaceAll("/$","")+"/pedido/"+orderId;
+        String total=new BigDecimal(order.get("total").toString()).setScale(2).toPlainString();
         var item=new LinkedHashMap<String,Object>();
-        item.put("id",orderId.toString());item.put("title","Pedido Blessrom "+orderId);item.put("currency_id","PEN");item.put("quantity",1);item.put("unit_price",new BigDecimal(order.get("total").toString()));
+        item.put("external_code",orderId.toString());item.put("title","Pedido Blessrom "+orderId);item.put("quantity",1);item.put("unit_price",total);
         var body=new LinkedHashMap<String,Object>();
-        body.put("items",List.of(item));body.put("external_reference",orderId.toString());body.put("notification_url",webhookUrl);
-        body.put("back_urls",Map.of("success",returnUrl+"?pago=aprobado","pending",returnUrl+"?pago=pendiente","failure",returnUrl+"?pago=rechazado"));
-        body.put("auto_return","approved");body.put("payer",Map.of("email",customer.get("email")));
-        Map<String,Object> preference;
-        try { preference=postPreference(orderId.toString(),body); }
+        body.put("type","online");body.put("processing_mode","manual");body.put("capture_mode","automatic_async");
+        body.put("total_amount",total);body.put("items",List.of(item));body.put("external_reference",orderId.toString());
+        body.put("config",Map.of("online",Map.of("success_url",returnUrl+"?pago=aprobado","pending_url",returnUrl+"?pago=pendiente","failure_url",returnUrl+"?pago=rechazado","auto_return","approved")));
+        body.put("payer",Map.of("email",customer.get("email")));
+        Map<String,Object> providerOrder;
+        try { providerOrder=postOrder(orderId.toString(),body); }
         catch(Exception e) { throw new Problem(502,"PAYMENT_PROVIDER_UNAVAILABLE","Mercado Pago no está disponible temporalmente. Intenta nuevamente."); }
-        String preferenceId=required(preference,"id"),checkoutUrl=required(preference,"init_point");
-        db.execute("INSERT INTO order_payments(order_id,status,method,provider_reference,checkout_url,provider_status) VALUES(?,'PENDING_PROVIDER','MERCADO_PAGO',?,?,'created')",orderId,preferenceId,checkoutUrl);
-        return Map.of("preferenceId",preferenceId,"checkoutUrl",checkoutUrl);
+        String providerOrderId=required(providerOrder,"id"),checkoutUrl=required(providerOrder,"checkout_url");
+        db.execute("INSERT INTO order_payments(order_id,status,method,provider_reference,checkout_url,provider_status) VALUES(?,'PENDING_PROVIDER','MERCADO_PAGO',?,?,'created')",orderId,providerOrderId,checkoutUrl);
+        return Map.of("orderId",providerOrderId,"checkoutUrl",checkoutUrl);
     }
 
     public void webhook(String signature,String requestId,String dataId) {
         requireEnabled(); validateSignature(signature,requestId,dataId);
         Map<String,Object> remote;
-        try { remote=getPayment(dataId); }
+        try { remote=getOrder(dataId); }
         catch(Exception e) { throw new Problem(502,"PAYMENT_PROVIDER_UNAVAILABLE","No se pudo verificar el pago."); }
         UUID orderId;
         try { orderId=UUID.fromString(String.valueOf(remote.get("external_reference"))); }
         catch(Exception e) { throw new Problem(400,"INVALID_PAYMENT_REFERENCE","Referencia de pago inválida."); }
         var order=db.one("SELECT id,version,status,total,currency FROM orders WHERE id=? FOR UPDATE",orderId);
         var payment=db.one("SELECT * FROM order_payments WHERE order_id=? AND method='MERCADO_PAGO' FOR UPDATE",orderId);
-        String status=String.valueOf(remote.get("status"));
-        db.execute("UPDATE order_payments SET external_payment_id=?,provider_status=? WHERE order_id=?",dataId,status,orderId);
-        if(!"approved".equals(status)||"APPROVED".equals(payment.get("status"))) return;
-        BigDecimal paid=new BigDecimal(String.valueOf(remote.get("transaction_amount")));
-        if(!"PEN".equals(String.valueOf(remote.get("currency_id")))||paid.compareTo(new BigDecimal(order.get("total").toString()))!=0)
+        if(!dataId.equals(String.valueOf(payment.get("provider_reference")))) throw new Problem(400,"INVALID_PAYMENT_REFERENCE","La orden de Mercado Pago no pertenece al pedido.");
+        String status=String.valueOf(remote.get("status")),statusDetail=String.valueOf(remote.get("status_detail"));
+        String externalPaymentId=paymentId(remote).orElse(dataId);
+        db.execute("UPDATE order_payments SET external_payment_id=?,provider_status=? WHERE order_id=?",externalPaymentId,status+":"+statusDetail,orderId);
+        if(!"processed".equals(status)||!"accredited".equals(statusDetail)||"APPROVED".equals(payment.get("status"))) return;
+        BigDecimal paid=new BigDecimal(String.valueOf(remote.get("total_paid_amount")));
+        Object currency=remote.getOrDefault("currency",remote.get("currency_id"));
+        if(!"PEN".equals(String.valueOf(currency))||paid.compareTo(new BigDecimal(order.get("total").toString()))!=0)
             throw Problem.conflict("PAYMENT_AMOUNT_MISMATCH","El importe confirmado no coincide con el pedido.");
         db.execute("UPDATE order_payments SET version=version+1,status='APPROVED',reviewed_at=now(),reviewed_by='mercado-pago',review_note='Confirmado automáticamente por Mercado Pago' WHERE order_id=?",orderId);
         if("PENDING_PAYMENT".equals(order.get("status"))) orders.transition(orderId,new Api.OrderStatus(Db.version(order),"PAYMENT_CONFIRMED"),"mercado-pago");
@@ -79,7 +84,8 @@ public class MercadoPagoService {
         Map<String,String> parts=new HashMap<>();for(String part:signature.split(",")){var pair=part.trim().split("=",2);if(pair.length==2)parts.put(pair[0],pair[1]);}
         String ts=parts.get("ts"),provided=parts.get("v1");if(ts==null||provided==null)throw new Problem(401,"INVALID_WEBHOOK_SIGNATURE","Firma de webhook inválida.");
         try {
-            if(Math.abs(Instant.now().getEpochSecond()-Long.parseLong(ts))>300)throw new Problem(401,"INVALID_WEBHOOK_SIGNATURE","Firma de webhook vencida.");
+            long timestamp=Long.parseLong(ts);if(timestamp>10_000_000_000L)timestamp/=1000;
+            if(Math.abs(Instant.now().getEpochSecond()-timestamp)>300)throw new Problem(401,"INVALID_WEBHOOK_SIGNATURE","Firma de webhook vencida.");
             String manifest="id:"+dataId+";request-id:"+requestId+";ts:"+ts+";";Mac mac=Mac.getInstance("HmacSHA256");mac.init(new SecretKeySpec(secret.getBytes(StandardCharsets.UTF_8),"HmacSHA256"));
             String expected=HexFormat.of().formatHex(mac.doFinal(manifest.getBytes(StandardCharsets.UTF_8)));
             if(!MessageDigest.isEqual(expected.getBytes(StandardCharsets.US_ASCII),provided.getBytes(StandardCharsets.US_ASCII)))throw new Problem(401,"INVALID_WEBHOOK_SIGNATURE","Firma de webhook inválida.");
@@ -87,13 +93,19 @@ public class MercadoPagoService {
     }
     private void requireEnabled(){if(!enabled||accessToken.isEmpty()||accessToken.get().isBlank())throw new Problem(503,"PAYMENT_NOT_CONFIGURED","Mercado Pago todavía no está habilitado.");}
     private String bearer(){return "Bearer "+accessToken.orElseThrow();}
-    @SuppressWarnings("unchecked") private Map<String,Object> postPreference(String key,Map<String,Object> body)throws Exception{
-        var request=HttpRequest.newBuilder(URI.create("https://api.mercadopago.com/checkout/preferences")).timeout(java.time.Duration.ofSeconds(8)).header("Authorization",bearer()).header("X-Idempotency-Key",key).header("Content-Type","application/json").POST(HttpRequest.BodyPublishers.ofString(json.write(body))).build();
+    @SuppressWarnings("unchecked") private Map<String,Object> postOrder(String key,Map<String,Object> body)throws Exception{
+        var request=HttpRequest.newBuilder(URI.create("https://api.mercadopago.com/v1/orders")).timeout(java.time.Duration.ofSeconds(8)).header("Authorization",bearer()).header("X-Idempotency-Key",key).header("Content-Type","application/json").POST(HttpRequest.BodyPublishers.ofString(json.write(body))).build();
         var response=client().send(request,HttpResponse.BodyHandlers.ofString());if(response.statusCode()<200||response.statusCode()>=300)throw new IllegalStateException("Mercado Pago HTTP "+response.statusCode());return json.read(response.body(),Map.class);
     }
-    @SuppressWarnings("unchecked") private Map<String,Object> getPayment(String id)throws Exception{
-        var request=HttpRequest.newBuilder(URI.create("https://api.mercadopago.com/v1/payments/"+id)).timeout(java.time.Duration.ofSeconds(8)).header("Authorization",bearer()).GET().build();
+    @SuppressWarnings("unchecked") private Map<String,Object> getOrder(String id)throws Exception{
+        var request=HttpRequest.newBuilder(URI.create("https://api.mercadopago.com/v1/orders/"+id)).timeout(java.time.Duration.ofSeconds(8)).header("Authorization",bearer()).GET().build();
         var response=client().send(request,HttpResponse.BodyHandlers.ofString());if(response.statusCode()!=200)throw new IllegalStateException("Mercado Pago HTTP "+response.statusCode());return json.read(response.body(),Map.class);
+    }
+
+    private static Optional<String> paymentId(Map<String,Object> order){
+        Object transactions=order.get("transactions");if(!(transactions instanceof Map<?,?> transactionMap))return Optional.empty();
+        Object payments=transactionMap.get("payments");if(!(payments instanceof List<?> list)||list.isEmpty()||!(list.getFirst() instanceof Map<?,?> payment))return Optional.empty();
+        Object id=payment.get("id");return id==null?Optional.empty():Optional.of(id.toString());
     }
 
     private HttpClient client() {

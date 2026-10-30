@@ -20,7 +20,7 @@ class MercadoPagoServiceTest {
 
         String dataId = "123456789";
         String requestId = "request-123";
-        String timestamp = Long.toString(Instant.now().getEpochSecond());
+        String timestamp = Long.toString(Instant.now().toEpochMilli());
         String manifest = "id:" + dataId + ";request-id:" + requestId + ";ts:" + timestamp + ";";
         String signature = "ts=" + timestamp + ",v1=" + hmac(manifest, "test-webhook-secret");
 
