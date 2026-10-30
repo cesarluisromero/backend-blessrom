@@ -17,8 +17,9 @@ public class OrderService {
     @Inject NotificationService notifications;
     @ConfigProperty(name="blessrom.reservation-minutes",defaultValue="30") int reservationMinutes;
     public record Result(Map<String,Object> order,boolean replayed) {}
+    public Result checkout(UUID cartId,String token,String key,Api.Checkout input) { return checkout(cartId,token,key,input,null); }
     @SuppressWarnings("unchecked")
-    public Result checkout(UUID cartId,String token,String key,Api.Checkout input) {
+    public Result checkout(UUID cartId,String token,String key,Api.Checkout input,String customerSubject) {
         if(key==null||!key.matches("[A-Za-z0-9_-]{8,100}")) throw new Problem(400,"INVALID_IDEMPOTENCY_KEY","Envía Idempotency-Key de 8 a 100 caracteres alfanuméricos, guion o guion bajo.");
         var cart=carts.authorize(cartId,token,true);String requestHash=Tokens.hash(json.write(input));
         var previous=db.rows("SELECT id,idempotency_key,request_hash FROM orders WHERE cart_id=?",cartId);
@@ -43,9 +44,10 @@ public class OrderService {
         var customer=new LinkedHashMap<String,Object>();
         customer.put("recipient",input.recipient());customer.put("email",input.email());customer.put("phone",input.phone());
         customer.put("address",input.address());customer.put("districtCode",input.districtCode());customer.put("districtName",quote.get("districtName"));
-        db.execute("INSERT INTO orders(id,cart_id,idempotency_key,request_hash,token_hash,access_expires_at,subtotal,shipping,total,customer,reservation_expires_at) VALUES(?,?,?,?,?,?,?,?,?,?::jsonb,?)",
+        if(customerSubject!=null) db.execute("INSERT INTO customer_profiles(subject) VALUES(?) ON CONFLICT(subject) DO NOTHING",customerSubject);
+        db.execute("INSERT INTO orders(id,cart_id,idempotency_key,request_hash,token_hash,access_expires_at,subtotal,shipping,total,customer,reservation_expires_at,customer_subject) VALUES(?,?,?,?,?,?,?,?,?,?::jsonb,?,?)",
             id,cartId,key,requestHash,cart.get("token_hash"),Instant.now().plus(30,ChronoUnit.DAYS),
-            new BigDecimal(quote.get("subtotal").toString()),new BigDecimal(quote.get("shipping").toString()),new BigDecimal(quote.get("total").toString()),json.write(customer),expiry);
+            new BigDecimal(quote.get("subtotal").toString()),new BigDecimal(quote.get("shipping").toString()),new BigDecimal(quote.get("total").toString()),json.write(customer),expiry,customerSubject);
         for(var item:items) {
             UUID variant=(UUID)item.get("variantId");int quantity=((Number)item.get("quantity")).intValue();
             db.execute("UPDATE inventory SET reserved=reserved+?,version=version+1 WHERE variant_id=?",quantity,variant);
@@ -62,6 +64,7 @@ public class OrderService {
         var order=db.one("SELECT token_hash,access_expires_at FROM orders WHERE id=?",id);Tokens.authorize(token,order,"access_expires_at");return view(id);
     }
     public Map<String,Object> adminGet(UUID id) { var order=view(id);order.put("notifications",notifications.list(id));return order; }
+    public Map<String,Object> accountGet(UUID id,String subject) { db.one("SELECT id FROM orders WHERE id=? AND customer_subject=?",id,subject);return view(id); }
     public Map<String,Object> transition(UUID id,Api.OrderStatus input,String actor) {
         var order=db.one("SELECT * FROM orders WHERE id=? FOR UPDATE",id);
         long current=((Number)order.get("version")).longValue();
@@ -108,6 +111,11 @@ public class OrderService {
         CatalogService.validatePage(page,size);
         return Map.of("items",db.rows("SELECT o.id,o.version,o.status,o.currency,o.total,o.created_at,o.reservation_expires_at,p.status AS payment_status,p.method AS payment_method FROM orders o LEFT JOIN order_payments p ON p.order_id=o.id ORDER BY o.created_at DESC,o.id LIMIT ? OFFSET ?",size,page*size),
             "page",page,"size",size,"total",db.one("SELECT count(*) AS n FROM orders").get("n"));
+    }
+    public Map<String,Object> listByCustomer(String subject,int page,int size) {
+        CatalogService.validatePage(page,size);
+        return Map.of("items",db.rows("SELECT o.id,o.version,o.status,o.currency,o.total,o.created_at,o.reservation_expires_at,p.status AS payment_status,p.method AS payment_method FROM orders o LEFT JOIN order_payments p ON p.order_id=o.id WHERE o.customer_subject=? ORDER BY o.created_at DESC,o.id LIMIT ? OFFSET ?",subject,size,page*size),
+            "page",page,"size",size,"total",db.one("SELECT count(*) AS n FROM orders WHERE customer_subject=?",subject).get("n"));
     }
     public Map<String,Object> cancel(UUID id,String token) {
         var order=db.one("SELECT * FROM orders WHERE id=? FOR UPDATE",id);

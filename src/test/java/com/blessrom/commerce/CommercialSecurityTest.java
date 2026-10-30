@@ -6,6 +6,7 @@ import static io.restassured.RestAssured.given;
 @QuarkusTest
 class CommercialSecurityTest {
     @Test void adminRequiresAuthentication() { given().get("/api/v1/admin/products").then().statusCode(401); }
+    @Test void accountRequiresAuthentication() { given().get("/api/v1/account").then().statusCode(401); }
     @Test @TestSecurity(user="customer",roles={"customer"})
     void customersCannotManageCommerce() { given().get("/api/v1/admin/products").then().statusCode(403); }
     @Test @TestSecurity(user="administrator",roles={"admin"})

@@ -54,7 +54,7 @@ Para generar Linux nativo con Mandrel JDK 25 desde una máquina Linux/CI con Doc
 
 La compilación nativa debe ejecutarse fuera del VPS inicial de 1 vCPU / 4 GB. Todavía falta comprobar esta entrega en modo nativo y configurar un entorno de prueba PostgreSQL/OIDC para las pruebas del ejecutable. No se afirma que la imagen nativa esté validada.
 
-Antes de producción faltan, entre otros: pasarela y webhooks, consumo definitivo de inventario al confirmar pago, Keycloak/MFA real, archivos de imágenes, cuentas de cliente, backups y pruebas de carga. Ver el documento comercial.
+Antes de producción faltan, entre otros: pasarela y webhooks, MFA para operadores, archivos de imágenes, backups y pruebas de carga. Las cuentas de cliente ya incluyen perfil, direcciones e historial de pedidos nuevos realizados con sesión iniciada. Ver el documento comercial.
 
 No se ha modificado frontend-blessrom.
 

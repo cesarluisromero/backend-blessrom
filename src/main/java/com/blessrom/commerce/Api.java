@@ -37,6 +37,13 @@ public final class Api {
         @NotBlank @Size(max=150) String districtName, @NotNull @DecimalMin("0") @Digits(integer=8,fraction=2) BigDecimal amount, boolean active) {}
     public record UpdateRate(@Min(0) long version, @NotNull @Valid Rate rate) {}
     public record Quantity(@Min(1) @Max(100) int quantity) {}
+    public record CustomerProfile(@NotBlank @Email @Size(max=254) String email,
+        @NotBlank @Size(max=100) String firstName,@NotBlank @Size(max=100) String lastName,
+        @NotBlank @Pattern(regexp="[0-9+ ()-]{7,30}") String phone) {}
+    public record CustomerAddress(@Min(0) long version,@NotBlank @Size(max=60) String label,
+        @NotBlank @Size(max=150) String recipient,@NotBlank @Pattern(regexp="[0-9+ ()-]{7,30}") String phone,
+        @NotBlank @Size(max=500) String address,@NotBlank @Pattern(regexp="[0-9]{6}") String districtCode,
+        @NotBlank @Size(max=150) String districtName,boolean isDefault) {}
     @RegisterForReflection
     public record Checkout(@NotBlank @Size(max=150) String recipient, @NotBlank @Email @Size(max=254) String email,
         @NotBlank @Pattern(regexp="[0-9+ ()-]{7,30}") String phone, @NotBlank @Size(max=500) String address,
