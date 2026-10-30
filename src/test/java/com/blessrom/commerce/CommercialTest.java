@@ -37,7 +37,7 @@ class CommercialTest {
         String district;
         do { district=String.valueOf(800000+ThreadLocalRandom.current().nextInt(100000)); }
         while(!db.rows("SELECT id FROM shipping_rates WHERE district_code=?",district).isEmpty());
-        shipping.create(new Api.Rate(district,"Distrito de prueba",new BigDecimal("10.00"),true));
+        shipping.create(new Api.Rate("Departamento de prueba","Provincia de prueba",district,"Distrito de prueba",new BigDecimal("10.00"),true));
         return new Fixture(product,variant,category,sku,district);
     }
     Basket basket(Fixture f,int qty) {

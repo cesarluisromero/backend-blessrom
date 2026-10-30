@@ -33,8 +33,9 @@ public final class Api {
         @Size(max=300) String note) {}
     public record Adjustment(@Min(0) long version, @Min(-1000000) @Max(1000000) int delta,
         @NotBlank @Size(max=300) String reason) {}
-    public record Rate(@NotBlank @Pattern(regexp="[0-9]{6}") String districtCode,
-        @NotBlank @Size(max=150) String districtName, @NotNull @DecimalMin("0") @Digits(integer=8,fraction=2) BigDecimal amount, boolean active) {}
+    public record Rate(@NotBlank @Size(max=150) String departmentName,@NotBlank @Size(max=150) String provinceName,
+        @NotBlank @Pattern(regexp="[0-9]{6}") String districtCode,@NotBlank @Size(max=150) String districtName,
+        @NotNull @DecimalMin("0") @Digits(integer=8,fraction=2) BigDecimal amount, boolean active) {}
     public record UpdateRate(@Min(0) long version, @NotNull @Valid Rate rate) {}
     public record Quantity(@Min(1) @Max(100) int quantity) {}
     public record CustomerProfile(@NotBlank @Email @Size(max=254) String email,

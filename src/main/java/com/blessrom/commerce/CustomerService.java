@@ -33,20 +33,22 @@ public class CustomerService {
 
     public Map<String,Object> createAddress(String subject,Api.CustomerAddress input) {
         ensure(subject);
+        var district=activeDistrict(input.districtCode());
         UUID id=UUID.randomUUID();
         boolean first=addresses(subject).isEmpty();
         if(input.isDefault()||first) clearDefaultExcept(subject,null);
         boolean makeDefault=input.isDefault()||first;
         db.execute("INSERT INTO customer_addresses(id,customer_subject,label,recipient,phone,address,district_code,district_name,is_default) VALUES(?,?,?,?,?,?,?,?,?)",
-            id,subject,clean(input.label()),clean(input.recipient()),clean(input.phone()),clean(input.address()),input.districtCode(),clean(input.districtName()),makeDefault);
+            id,subject,clean(input.label()),clean(input.recipient()),clean(input.phone()),clean(input.address()),input.districtCode(),district.get("district_name"),makeDefault);
         return address(subject,id);
     }
 
     public Map<String,Object> updateAddress(String subject,UUID id,Api.CustomerAddress input) {
         address(subject,id);
+        var district=activeDistrict(input.districtCode());
         if(input.isDefault()) clearDefaultExcept(subject,id);
         int updated=db.execute("UPDATE customer_addresses SET version=version+1,label=?,recipient=?,phone=?,address=?,district_code=?,district_name=?,is_default=?,updated_at=now() WHERE id=? AND customer_subject=? AND version=?",
-            clean(input.label()),clean(input.recipient()),clean(input.phone()),clean(input.address()),input.districtCode(),clean(input.districtName()),input.isDefault(),id,subject,input.version());
+            clean(input.label()),clean(input.recipient()),clean(input.phone()),clean(input.address()),input.districtCode(),district.get("district_name"),input.isDefault(),id,subject,input.version());
         if(updated!=1) throw Problem.conflict("VERSION_CONFLICT","La dirección cambió; vuelve a cargarla.");
         ensureDefault(subject);
         return address(subject,id);
@@ -64,6 +66,7 @@ public class CustomerService {
     private Map<String,Object> address(String subject,UUID id) {
         return db.one("SELECT id,version,label,recipient,phone,address,district_code,district_name,is_default,created_at,updated_at FROM customer_addresses WHERE id=? AND customer_subject=?",id,subject);
     }
+    private Map<String,Object> activeDistrict(String code) { return db.one("SELECT district_name FROM shipping_rates WHERE district_code=? AND active=true",code); }
     private void clearDefaultExcept(String subject,UUID id) {
         if(id==null) db.execute("UPDATE customer_addresses SET is_default=false,version=version+1,updated_at=now() WHERE customer_subject=? AND is_default",subject);
         else db.execute("UPDATE customer_addresses SET is_default=false,version=version+1,updated_at=now() WHERE customer_subject=? AND is_default AND id<>?",subject,id);
