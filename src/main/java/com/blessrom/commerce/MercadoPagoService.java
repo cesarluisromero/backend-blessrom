@@ -43,7 +43,7 @@ public class MercadoPagoService {
         String returnUrl=storeUrl.replaceAll("/$","")+"/pedido/"+orderId;
         String total=new BigDecimal(order.get("total").toString()).setScale(2).toPlainString();
         var item=new LinkedHashMap<String,Object>();
-        item.put("external_code",orderId.toString());item.put("title","Pedido Blessrom "+orderId);item.put("quantity",1);item.put("unit_price",total);
+        item.put("title","Pedido Blessrom "+orderId);item.put("quantity",1);item.put("unit_price",total);
         var body=new LinkedHashMap<String,Object>();
         body.put("type","online");body.put("processing_mode","manual");body.put("capture_mode","automatic_async");
         body.put("total_amount",total);body.put("items",List.of(item));body.put("external_reference",orderId.toString());
