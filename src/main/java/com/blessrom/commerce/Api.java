@@ -3,6 +3,7 @@ import io.quarkus.runtime.annotations.RegisterForReflection;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.*;
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.util.*;
 public final class Api {
     private Api() {}
@@ -23,6 +24,11 @@ public final class Api {
     public record Version(@Min(0) long version) {}
     public record OrderStatus(@Min(0) long version,
         @NotBlank @Pattern(regexp="PAYMENT_CONFIRMED|PREPARING|READY_TO_SHIP|SHIPPED|DELIVERED|CANCELLED") String status) {}
+    public record Shipment(@Min(0) long version,
+        @NotBlank @Size(max=120) String carrier,
+        @NotBlank @Size(min=3,max=120) @Pattern(regexp="[A-Za-z0-9._/-]+") String trackingNumber,
+        @NotNull @FutureOrPresent LocalDate estimatedDelivery,
+        @Size(max=500) String notes) {}
     public record PaymentSubmission(
         @NotBlank @Pattern(regexp="YAPE|PLIN|BANK_TRANSFER|CASH_ON_DELIVERY") String method,
         @Size(max=100) String reference,

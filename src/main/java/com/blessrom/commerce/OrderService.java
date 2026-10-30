@@ -77,15 +77,43 @@ public class OrderService {
                 throw Problem.conflict("PAYMENT_NOT_APPROVED","El pago o acuerdo de pago debe aprobarse primero.");
             confirmInventory(id,actor);
         }
+        if("SHIPPED".equals(to)&&db.rows("SELECT order_id FROM order_shipments WHERE order_id=?",id).isEmpty())
+            throw Problem.conflict("SHIPMENT_REQUIRED","Registra transportista, seguimiento y fecha estimada antes de marcar el pedido como enviado.");
         if("CANCELLED".equals(to)) {
             release(order,to,actor);
         } else {
             int updated=db.execute("UPDATE orders SET status=?,version=version+1 WHERE id=? AND version=?",to,id,current);
             if(updated!=1) throw Problem.conflict("VERSION_CONFLICT","El pedido cambió; vuelve a consultarlo.");
+            if("SHIPPED".equals(to)) db.execute("UPDATE order_shipments SET shipped_at=COALESCE(shipped_at,now()) WHERE order_id=?",id);
+            if("DELIVERED".equals(to)) db.execute("UPDATE order_shipments SET delivered_at=COALESCE(delivered_at,now()) WHERE order_id=?",id);
             history(id,to,actor);
-            notifications.enqueue(id,to,null);
+            notifications.enqueue(id,to,"SHIPPED".equals(to)?shipmentDetail(id):null);
         }
         return view(id);
+    }
+    public Map<String,Object> saveShipment(UUID id,Api.Shipment input,String actor) {
+        var order=db.one("SELECT status FROM orders WHERE id=? FOR UPDATE",id);
+        String status=order.get("status").toString();
+        if(!Set.of("PREPARING","READY_TO_SHIP").contains(status))
+            throw Problem.conflict("SHIPMENT_NOT_EDITABLE","Los datos de envío sólo pueden editarse durante la preparación del pedido.");
+        var existing=db.rows("SELECT version FROM order_shipments WHERE order_id=? FOR UPDATE",id);
+        if(existing.isEmpty()) {
+            if(input.version()!=0) throw Problem.conflict("VERSION_CONFLICT","Los datos de envío cambiaron; vuelve a consultar el pedido.");
+            db.execute("INSERT INTO order_shipments(order_id,carrier,tracking_number,estimated_delivery,notes,updated_by) VALUES(?,?,?,?,?,?)",
+                id,input.carrier().trim(),input.trackingNumber().trim(),input.estimatedDelivery(),blankToNull(input.notes()),actor);
+        } else {
+            long current=((Number)existing.getFirst().get("version")).longValue();
+            if(current!=input.version()) throw Problem.conflict("VERSION_CONFLICT","Los datos de envío cambiaron; vuelve a consultar el pedido.");
+            int updated=db.execute("UPDATE order_shipments SET carrier=?,tracking_number=?,estimated_delivery=?,notes=?,updated_by=?,updated_at=now(),version=version+1 WHERE order_id=? AND version=?",
+                input.carrier().trim(),input.trackingNumber().trim(),input.estimatedDelivery(),blankToNull(input.notes()),actor,id,current);
+            if(updated!=1) throw Problem.conflict("VERSION_CONFLICT","Los datos de envío cambiaron; vuelve a consultar el pedido.");
+        }
+        return adminGet(id);
+    }
+    private static String blankToNull(String value) { return value==null||value.isBlank()?null:value.trim(); }
+    private String shipmentDetail(UUID id) {
+        var shipment=db.one("SELECT carrier,tracking_number,estimated_delivery FROM order_shipments WHERE order_id=?",id);
+        return "Transportista: "+shipment.get("carrier")+" · Seguimiento: "+shipment.get("tracking_number")+" · Entrega estimada: "+shipment.get("estimated_delivery");
     }
     static boolean allowed(String from,String to) {
         return switch(from) {
@@ -155,6 +183,8 @@ public class OrderService {
         order.put("history",db.rows("SELECT status,actor,created_at FROM order_history WHERE order_id=? ORDER BY created_at,id",id));
         var payments=db.rows("SELECT version,status,method,reference,(proof_data IS NOT NULL) AS has_proof,provider_reference,checkout_url,provider_status,submitted_at,reviewed_at,reviewed_by,review_note FROM order_payments WHERE order_id=?",id);
         order.put("payment",payments.isEmpty()?null:payments.getFirst());
+        var shipments=db.rows("SELECT version,carrier,tracking_number,estimated_delivery,notes,shipped_at,delivered_at,updated_at FROM order_shipments WHERE order_id=?",id);
+        order.put("shipment",shipments.isEmpty()?null:shipments.getFirst());
         return order;
     }
 }
