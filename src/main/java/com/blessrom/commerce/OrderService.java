@@ -138,7 +138,7 @@ public class OrderService {
             inventory.movement(variant,id,0,-quantity,"Liberación: "+status,actor);
         }
         db.execute("UPDATE orders SET status=?,version=version+1 WHERE id=?",status,id);
-        db.execute("UPDATE order_payments SET version=version+1,status='REJECTED',reviewed_at=now(),reviewed_by=?,review_note=? WHERE order_id=? AND status='SUBMITTED'",actor,"Pedido "+status.toLowerCase(Locale.ROOT),id);
+        db.execute("UPDATE order_payments SET version=version+1,status='REJECTED',reviewed_at=now(),reviewed_by=?,review_note=? WHERE order_id=? AND status IN ('SUBMITTED','PENDING_PROVIDER')",actor,"Pedido "+status.toLowerCase(Locale.ROOT),id);
         history(id,status,actor);
         notifications.enqueue(id,status,null);
     }
@@ -152,7 +152,7 @@ public class OrderService {
         for(var item:items) item.put("attributes",json.read(item.get("attributes"),Map.class));
         order.put("items",items);
         order.put("history",db.rows("SELECT status,actor,created_at FROM order_history WHERE order_id=? ORDER BY created_at,id",id));
-        var payments=db.rows("SELECT version,status,method,reference,(proof_data IS NOT NULL) AS has_proof,submitted_at,reviewed_at,reviewed_by,review_note FROM order_payments WHERE order_id=?",id);
+        var payments=db.rows("SELECT version,status,method,reference,(proof_data IS NOT NULL) AS has_proof,provider_reference,checkout_url,provider_status,submitted_at,reviewed_at,reviewed_by,review_note FROM order_payments WHERE order_id=?",id);
         order.put("payment",payments.isEmpty()?null:payments.getFirst());
         return order;
     }
