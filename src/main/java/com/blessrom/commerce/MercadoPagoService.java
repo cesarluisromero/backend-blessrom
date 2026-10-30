@@ -4,6 +4,7 @@ import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import jakarta.transaction.Transactional;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
+import org.jboss.logging.Logger;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import java.math.BigDecimal;
@@ -16,6 +17,7 @@ import java.util.*;
 
 @ApplicationScoped @Transactional
 public class MercadoPagoService {
+    private static final Logger LOG=Logger.getLogger(MercadoPagoService.class);
     @Inject Db db; @Inject Json json; @Inject OrderService orders;
     private volatile HttpClient client;
     @ConfigProperty(name="blessrom.payments.mercado-pago.enabled") boolean enabled;
@@ -49,7 +51,7 @@ public class MercadoPagoService {
         body.put("payer",Map.of("email",customer.get("email")));
         Map<String,Object> providerOrder;
         try { providerOrder=postOrder(orderId.toString(),body); }
-        catch(Exception e) { throw new Problem(502,"PAYMENT_PROVIDER_UNAVAILABLE","Mercado Pago no está disponible temporalmente. Intenta nuevamente."); }
+        catch(Exception e) { LOG.warnf("Mercado Pago rechazó la creación de la order: %s",safeMessage(e));throw new Problem(502,"PAYMENT_PROVIDER_UNAVAILABLE","Mercado Pago no está disponible temporalmente. Intenta nuevamente."); }
         String providerOrderId=required(providerOrder,"id"),checkoutUrl=required(providerOrder,"checkout_url");
         db.execute("INSERT INTO order_payments(order_id,status,method,provider_reference,checkout_url,provider_status) VALUES(?,'PENDING_PROVIDER','MERCADO_PAGO',?,?,'created')",orderId,providerOrderId,checkoutUrl);
         return Map.of("orderId",providerOrderId,"checkoutUrl",checkoutUrl);
@@ -59,7 +61,7 @@ public class MercadoPagoService {
         requireEnabled(); validateSignature(signature,requestId,dataId);
         Map<String,Object> remote;
         try { remote=getOrder(dataId); }
-        catch(Exception e) { throw new Problem(502,"PAYMENT_PROVIDER_UNAVAILABLE","No se pudo verificar el pago."); }
+        catch(Exception e) { LOG.warnf("No se pudo consultar la order de Mercado Pago: %s",safeMessage(e));throw new Problem(502,"PAYMENT_PROVIDER_UNAVAILABLE","No se pudo verificar el pago."); }
         UUID orderId;
         try { orderId=UUID.fromString(String.valueOf(remote.get("external_reference"))); }
         catch(Exception e) { throw new Problem(400,"INVALID_PAYMENT_REFERENCE","Referencia de pago inválida."); }
@@ -95,11 +97,11 @@ public class MercadoPagoService {
     private String bearer(){return "Bearer "+accessToken.orElseThrow();}
     @SuppressWarnings("unchecked") private Map<String,Object> postOrder(String key,Map<String,Object> body)throws Exception{
         var request=HttpRequest.newBuilder(URI.create("https://api.mercadopago.com/v1/orders")).timeout(java.time.Duration.ofSeconds(8)).header("Authorization",bearer()).header("X-Idempotency-Key",key).header("Content-Type","application/json").POST(HttpRequest.BodyPublishers.ofString(json.write(body))).build();
-        var response=client().send(request,HttpResponse.BodyHandlers.ofString());if(response.statusCode()<200||response.statusCode()>=300)throw new IllegalStateException("Mercado Pago HTTP "+response.statusCode());return json.read(response.body(),Map.class);
+        var response=client().send(request,HttpResponse.BodyHandlers.ofString());if(response.statusCode()<200||response.statusCode()>=300)throw providerError(response);return json.read(response.body(),Map.class);
     }
     @SuppressWarnings("unchecked") private Map<String,Object> getOrder(String id)throws Exception{
         var request=HttpRequest.newBuilder(URI.create("https://api.mercadopago.com/v1/orders/"+id)).timeout(java.time.Duration.ofSeconds(8)).header("Authorization",bearer()).GET().build();
-        var response=client().send(request,HttpResponse.BodyHandlers.ofString());if(response.statusCode()!=200)throw new IllegalStateException("Mercado Pago HTTP "+response.statusCode());return json.read(response.body(),Map.class);
+        var response=client().send(request,HttpResponse.BodyHandlers.ofString());if(response.statusCode()!=200)throw providerError(response);return json.read(response.body(),Map.class);
     }
 
     private static Optional<String> paymentId(Map<String,Object> order){
@@ -117,4 +119,7 @@ public class MercadoPagoService {
         return current;
     }
     private static String required(Map<String,Object> map,String key){Object value=map.get(key);if(value==null||value.toString().isBlank())throw new Problem(502,"INVALID_PROVIDER_RESPONSE","Respuesta inválida de Mercado Pago.");return value.toString();}
+    private static IllegalStateException providerError(HttpResponse<String> response){return new IllegalStateException("HTTP "+response.statusCode()+" body="+truncate(response.body()));}
+    private static String safeMessage(Exception error){return truncate(error.getMessage());}
+    private static String truncate(String value){if(value==null)return "sin detalle";String clean=value.replaceAll("[\\r\\n\\t]+"," ");return clean.length()>1200?clean.substring(0,1200):clean;}
 }
