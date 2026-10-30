@@ -10,6 +10,7 @@ public class PaymentService {
     private static final Set<String> PROOF_TYPES=Set.of("image/jpeg","image/png","image/webp");
     @Inject Db db;
     @Inject OrderService orders;
+    @Inject NotificationService notifications;
 
     public record Proof(String contentType,byte[] data) {}
 
@@ -44,6 +45,7 @@ public class PaymentService {
         if(updated!=1) throw Problem.conflict("VERSION_CONFLICT","El pago cambió; vuelve a consultarlo.");
         if("APPROVED".equals(input.decision()))
             orders.transition(orderId,new Api.OrderStatus(input.orderVersion(),"PAYMENT_CONFIRMED"),actor);
+        else notifications.enqueue(orderId,"PAYMENT_REJECTED",clean(input.note()));
     }
 
     public Proof proof(UUID orderId) {

@@ -14,6 +14,7 @@ public class OrderService {
     @Inject Json json;
     @Inject CartService carts;
     @Inject InventoryService inventory;
+    @Inject NotificationService notifications;
     @ConfigProperty(name="blessrom.reservation-minutes",defaultValue="30") int reservationMinutes;
     public record Result(Map<String,Object> order,boolean replayed) {}
     @SuppressWarnings("unchecked")
@@ -54,12 +55,13 @@ public class OrderService {
         }
         db.execute("UPDATE carts SET status='CHECKED_OUT' WHERE id=?",cartId);
         history(id,"PENDING_PAYMENT","guest");
+        notifications.enqueue(id,"ORDER_CREATED",null);
         return new Result(view(id),false);
     }
     public Map<String,Object> get(UUID id,String token) {
         var order=db.one("SELECT token_hash,access_expires_at FROM orders WHERE id=?",id);Tokens.authorize(token,order,"access_expires_at");return view(id);
     }
-    public Map<String,Object> adminGet(UUID id) { return view(id); }
+    public Map<String,Object> adminGet(UUID id) { var order=view(id);order.put("notifications",notifications.list(id));return order; }
     public Map<String,Object> transition(UUID id,Api.OrderStatus input,String actor) {
         var order=db.one("SELECT * FROM orders WHERE id=? FOR UPDATE",id);
         long current=((Number)order.get("version")).longValue();
@@ -78,6 +80,7 @@ public class OrderService {
             int updated=db.execute("UPDATE orders SET status=?,version=version+1 WHERE id=? AND version=?",to,id,current);
             if(updated!=1) throw Problem.conflict("VERSION_CONFLICT","El pedido cambió; vuelve a consultarlo.");
             history(id,to,actor);
+            notifications.enqueue(id,to,null);
         }
         return view(id);
     }
@@ -129,6 +132,7 @@ public class OrderService {
         db.execute("UPDATE orders SET status=?,version=version+1 WHERE id=?",status,id);
         db.execute("UPDATE order_payments SET version=version+1,status='REJECTED',reviewed_at=now(),reviewed_by=?,review_note=? WHERE order_id=? AND status='SUBMITTED'",actor,"Pedido "+status.toLowerCase(Locale.ROOT),id);
         history(id,status,actor);
+        notifications.enqueue(id,status,null);
     }
     private void history(UUID id,String status,String actor) {
         db.execute("INSERT INTO order_history(id,order_id,status,actor) VALUES(?,?,?,?)",UUID.randomUUID(),id,status,actor);
