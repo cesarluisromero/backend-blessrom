@@ -18,10 +18,10 @@ class MercadoPagoServiceTest {
         MercadoPagoService service = new MercadoPagoService();
         service.webhookSecret = Optional.of("test-webhook-secret");
 
-        String dataId = "123456789";
+        String dataId = "ORDTST01M6ZCHAZEXAMPLE123456789";
         String requestId = "request-123";
         String timestamp = Long.toString(Instant.now().toEpochMilli());
-        String manifest = "id:" + dataId + ";request-id:" + requestId + ";ts:" + timestamp + ";";
+        String manifest = "id:" + dataId.toLowerCase(java.util.Locale.ROOT) + ";request-id:" + requestId + ";ts:" + timestamp + ";";
         String signature = "ts=" + timestamp + ",v1=" + hmac(manifest, "test-webhook-secret");
 
         assertDoesNotThrow(() -> service.validateSignature(signature, requestId, dataId));

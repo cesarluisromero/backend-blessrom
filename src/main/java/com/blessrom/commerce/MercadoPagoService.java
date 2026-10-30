@@ -88,7 +88,7 @@ public class MercadoPagoService {
         try {
             long timestamp=Long.parseLong(ts);if(timestamp>10_000_000_000L)timestamp/=1000;
             if(Math.abs(Instant.now().getEpochSecond()-timestamp)>300)throw new Problem(401,"INVALID_WEBHOOK_SIGNATURE","Firma de webhook vencida.");
-            String manifest="id:"+dataId+";request-id:"+requestId+";ts:"+ts+";";Mac mac=Mac.getInstance("HmacSHA256");mac.init(new SecretKeySpec(secret.getBytes(StandardCharsets.UTF_8),"HmacSHA256"));
+            String manifest="id:"+dataId.toLowerCase(Locale.ROOT)+";request-id:"+requestId+";ts:"+ts+";";Mac mac=Mac.getInstance("HmacSHA256");mac.init(new SecretKeySpec(secret.getBytes(StandardCharsets.UTF_8),"HmacSHA256"));
             String expected=HexFormat.of().formatHex(mac.doFinal(manifest.getBytes(StandardCharsets.UTF_8)));
             if(!MessageDigest.isEqual(expected.getBytes(StandardCharsets.US_ASCII),provided.getBytes(StandardCharsets.US_ASCII)))throw new Problem(401,"INVALID_WEBHOOK_SIGNATURE","Firma de webhook inválida.");
         } catch(Problem e){throw e;}catch(Exception e){throw new Problem(401,"INVALID_WEBHOOK_SIGNATURE","Firma de webhook inválida.");}
