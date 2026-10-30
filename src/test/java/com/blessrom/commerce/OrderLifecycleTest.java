@@ -8,12 +8,14 @@ class OrderLifecycleTest {
         assertTrue(OrderService.allowed("PENDING_PAYMENT","PAYMENT_CONFIRMED"));
         assertTrue(OrderService.allowed("PENDING_PAYMENT","CANCELLED"));
         assertTrue(OrderService.allowed("PAYMENT_CONFIRMED","PREPARING"));
-        assertTrue(OrderService.allowed("PREPARING","SHIPPED"));
+        assertTrue(OrderService.allowed("PREPARING","READY_TO_SHIP"));
+        assertTrue(OrderService.allowed("READY_TO_SHIP","SHIPPED"));
         assertTrue(OrderService.allowed("SHIPPED","DELIVERED"));
     }
 
     @Test void rejectsSkipsBacktrackingAndTerminalChanges() {
         assertFalse(OrderService.allowed("PENDING_PAYMENT","SHIPPED"));
+        assertFalse(OrderService.allowed("PREPARING","SHIPPED"));
         assertFalse(OrderService.allowed("PREPARING","PAYMENT_CONFIRMED"));
         assertFalse(OrderService.allowed("DELIVERED","CANCELLED"));
         assertFalse(OrderService.allowed("CANCELLED","PAYMENT_CONFIRMED"));

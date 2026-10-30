@@ -91,7 +91,8 @@ public class OrderService {
         return switch(from) {
             case "PENDING_PAYMENT" -> "PAYMENT_CONFIRMED".equals(to)||"CANCELLED".equals(to);
             case "PAYMENT_CONFIRMED" -> "PREPARING".equals(to);
-            case "PREPARING" -> "SHIPPED".equals(to);
+            case "PREPARING" -> "READY_TO_SHIP".equals(to);
+            case "READY_TO_SHIP" -> "SHIPPED".equals(to);
             case "SHIPPED" -> "DELIVERED".equals(to);
             default -> false;
         };

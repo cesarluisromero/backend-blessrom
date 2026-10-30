@@ -22,7 +22,7 @@ public final class Api {
     public record UpdateDraft(@Min(0) long version, @NotNull @Valid Draft draft) {}
     public record Version(@Min(0) long version) {}
     public record OrderStatus(@Min(0) long version,
-        @NotBlank @Pattern(regexp="PAYMENT_CONFIRMED|PREPARING|SHIPPED|DELIVERED|CANCELLED") String status) {}
+        @NotBlank @Pattern(regexp="PAYMENT_CONFIRMED|PREPARING|READY_TO_SHIP|SHIPPED|DELIVERED|CANCELLED") String status) {}
     public record PaymentSubmission(
         @NotBlank @Pattern(regexp="YAPE|PLIN|BANK_TRANSFER|CASH_ON_DELIVERY") String method,
         @Size(max=100) String reference,

@@ -99,6 +99,7 @@ final class OrderEmailTemplate {
             case "PAYMENT_CONFIRMED" -> "Tu pago fue aprobado";
             case "PAYMENT_REJECTED" -> "Necesitamos que revises tu pago";
             case "PREPARING" -> "Estamos preparando tu pedido";
+            case "READY_TO_SHIP" -> "Tu pedido está listo para enviar";
             case "SHIPPED" -> "Tu pedido fue enviado";
             case "DELIVERED" -> "Tu pedido fue entregado";
             case "CANCELLED" -> "Tu pedido fue cancelado";
@@ -113,6 +114,7 @@ final class OrderEmailTemplate {
             case "PAYMENT_CONFIRMED" -> "Pago aprobado";
             case "PAYMENT_REJECTED" -> "Pago por revisar";
             case "PREPARING" -> "En preparación";
+            case "READY_TO_SHIP" -> "Listo para enviar";
             case "SHIPPED" -> "En camino";
             case "DELIVERED" -> "Entregado";
             case "CANCELLED" -> "Cancelado";
@@ -127,6 +129,7 @@ final class OrderEmailTemplate {
             case "PAYMENT_CONFIRMED" -> "Confirmamos tu pago. Tu pedido continuará ahora con la preparación.";
             case "PAYMENT_REJECTED" -> "No pudimos validar la información de pago que recibimos.";
             case "PREPARING" -> "Nuestro equipo ya está preparando cuidadosamente tu pedido.";
+            case "READY_TO_SHIP" -> "Terminamos de preparar tu pedido y está listo para salir a reparto.";
             case "SHIPPED" -> "Tu pedido salió para entrega y pronto estará contigo.";
             case "DELIVERED" -> "Registramos la entrega de tu pedido. Gracias por elegir Blessrom.";
             case "CANCELLED" -> "El pedido fue cancelado y el inventario reservado quedó liberado.";
@@ -140,7 +143,8 @@ final class OrderEmailTemplate {
             case "ORDER_CREATED" -> "Completa o registra el pago dentro del plazo indicado para conservar la reserva.";
             case "PAYMENT_CONFIRMED" -> "Te avisaremos cuando comencemos a preparar tu compra.";
             case "PAYMENT_REJECTED" -> "Revisa los datos enviados o comunícate con soporte para recibir ayuda.";
-            case "PREPARING" -> "Te notificaremos nuevamente cuando el pedido salga para entrega.";
+            case "PREPARING" -> "Te notificaremos cuando terminemos de preparar tu compra.";
+            case "READY_TO_SHIP" -> "Te avisaremos nuevamente en cuanto el pedido salga para entrega.";
             case "SHIPPED" -> "Mantente atento al teléfono registrado para coordinar la recepción.";
             case "DELIVERED" -> "Esperamos que disfrutes tu compra. Si necesitas ayuda, estamos para atenderte.";
             case "CANCELLED", "EXPIRED" -> "Si todavía deseas los productos, puedes realizar un nuevo pedido sujeto a disponibilidad.";

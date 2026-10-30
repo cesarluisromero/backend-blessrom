@@ -7,7 +7,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class NotificationServiceTest {
     @Test void providesCustomerFacingTitlesForEveryOrderEvent() {
-        for(String event:new String[]{"ORDER_CREATED","PAYMENT_CONFIRMED","PAYMENT_REJECTED","PREPARING","SHIPPED","DELIVERED","CANCELLED","EXPIRED"})
+        for(String event:new String[]{"ORDER_CREATED","PAYMENT_CONFIRMED","PAYMENT_REJECTED","PREPARING","READY_TO_SHIP","SHIPPED","DELIVERED","CANCELLED","EXPIRED"})
             assertFalse(NotificationService.title(event).isBlank());
     }
 
@@ -19,7 +19,7 @@ class NotificationServiceTest {
 
     @Test void rendersBrandedMultipartContentForEveryOrderEvent() {
         UUID orderId=UUID.fromString("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee");
-        for(String event:new String[]{"ORDER_CREATED","PAYMENT_CONFIRMED","PAYMENT_REJECTED","PREPARING","SHIPPED","DELIVERED","CANCELLED","EXPIRED"}) {
+        for(String event:new String[]{"ORDER_CREATED","PAYMENT_CONFIRMED","PAYMENT_REJECTED","PREPARING","READY_TO_SHIP","SHIPPED","DELIVERED","CANCELLED","EXPIRED"}) {
             var email=OrderEmailTemplate.render(event,"César",orderId,new BigDecimal("109.90"),null);
             assertTrue(email.subject().startsWith("Blessrom · "));
             assertTrue(email.text().contains(orderId.toString()));

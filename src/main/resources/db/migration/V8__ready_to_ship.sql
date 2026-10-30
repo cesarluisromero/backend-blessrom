@@ -1,0 +1,11 @@
+ALTER TABLE orders DROP CONSTRAINT orders_status_check;
+ALTER TABLE orders ADD CONSTRAINT orders_status_check CHECK (status IN (
+  'PENDING_PAYMENT',
+  'PAYMENT_CONFIRMED',
+  'PREPARING',
+  'READY_TO_SHIP',
+  'SHIPPED',
+  'DELIVERED',
+  'CANCELLED',
+  'EXPIRED'
+));
