@@ -29,6 +29,16 @@ public final class Api {
         @NotBlank @Size(min=3,max=120) @Pattern(regexp="[A-Za-z0-9._/-]+") String trackingNumber,
         @NotNull @FutureOrPresent LocalDate estimatedDelivery,
         @Size(max=500) String notes) {}
+    public record ReturnItem(@NotNull UUID variantId,@Min(1) @Max(100) int quantity) {}
+    public record ReturnRequest(
+        @NotBlank @Pattern(regexp="REFUND|EXCHANGE") String requestedResolution,
+        @NotBlank @Size(min=10,max=1000) String reason,
+        @NotNull @Size(min=1,max=50) List<@NotNull @Valid ReturnItem> items) {}
+    public record ReturnAction(@Min(0) long version,
+        @NotBlank @Pattern(regexp="APPROVED|REJECTED|RECEIVED|REFUNDED|EXCHANGED") String status,
+        @NotBlank @Size(min=3,max=1000) String note,
+        @Size(max=150) String reference,
+        boolean restock) {}
     public record PaymentSubmission(
         @NotBlank @Pattern(regexp="YAPE|PLIN|BANK_TRANSFER|CASH_ON_DELIVERY") String method,
         @Size(max=100) String reference,

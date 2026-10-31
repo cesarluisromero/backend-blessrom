@@ -15,6 +15,7 @@ public class OrderService {
     @Inject CartService carts;
     @Inject InventoryService inventory;
     @Inject NotificationService notifications;
+    @Inject ReturnService returns;
     @ConfigProperty(name="blessrom.reservation-minutes",defaultValue="30") int reservationMinutes;
     public record Result(Map<String,Object> order,boolean replayed) {}
     public Result checkout(UUID cartId,String token,String key,Api.Checkout input) { return checkout(cartId,token,key,input,null); }
@@ -185,6 +186,7 @@ public class OrderService {
         order.put("payment",payments.isEmpty()?null:payments.getFirst());
         var shipments=db.rows("SELECT version,carrier,tracking_number,estimated_delivery,notes,shipped_at,delivered_at,updated_at FROM order_shipments WHERE order_id=?",id);
         order.put("shipment",shipments.isEmpty()?null:shipments.getFirst());
+        order.put("returns",returns.listForOrder(id));
         return order;
     }
 }

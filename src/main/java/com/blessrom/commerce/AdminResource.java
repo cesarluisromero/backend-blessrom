@@ -15,6 +15,7 @@ public class AdminResource {
     @Inject ShippingService shipping;
     @Inject OrderService orders;
     @Inject PaymentService payments;
+    @Inject ReturnService returns;
     @Inject SecurityIdentity identity;
     @POST @Path("/categories") public Response category(@NotNull @Valid Api.Category input) { return Response.status(201).entity(catalog.createCategory(input)).build(); }
     @GET @Path("/products") public Object products(@QueryParam("page") @DefaultValue("0") int page,@QueryParam("size") @DefaultValue("20") int size) { return catalog.list(true,page,size,null,null); }
@@ -38,5 +39,8 @@ public class AdminResource {
     @POST @Path("/orders/{id}/status") public Object status(@PathParam("id") UUID id,@NotNull @Valid Api.OrderStatus input) { return orders.transition(id,input,identity.getPrincipal().getName()); }
     @POST @Path("/orders/{id}/payment/review") public Object review(@PathParam("id") UUID id,@NotNull @Valid Api.PaymentReview input) { payments.review(id,input,identity.getPrincipal().getName());return orders.adminGet(id); }
     @GET @Path("/orders/{id}/payment/proof") @Produces({"image/jpeg","image/png","image/webp"}) public Response proof(@PathParam("id") UUID id) { var proof=payments.proof(id);return Response.ok(proof.data(),proof.contentType()).header("Content-Disposition","inline").build(); }
+    @PUT @Path("/returns/{id}") public Object returnAction(@PathParam("id") UUID id,@NotNull @Valid Api.ReturnAction input) {
+        return orders.adminGet(returns.action(id,input,identity.getPrincipal().getName()));
+    }
 }
 

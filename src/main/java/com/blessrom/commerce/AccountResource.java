@@ -14,6 +14,7 @@ import java.util.UUID;
 @Path("/api/v1/account") @Authenticated @Produces(MediaType.APPLICATION_JSON) @Consumes(MediaType.APPLICATION_JSON) @Tag(name="Cuenta del cliente")
 public class AccountResource {
     @Inject CustomerService customers;
+    @Inject ReturnService returns;
     @Inject SecurityIdentity identity;
     private String subject() { return identity.getPrincipal().getName(); }
 
@@ -25,4 +26,8 @@ public class AccountResource {
     @DELETE @Path("/addresses/{id}") public void deleteAddress(@PathParam("id") UUID id,@QueryParam("version") @Min(0) long version) { customers.deleteAddress(subject(),id,version); }
     @GET @Path("/orders") public Object orders(@QueryParam("page") @DefaultValue("0") int page,@QueryParam("size") @DefaultValue("20") int size) { return customers.orderList(subject(),page,size); }
     @GET @Path("/orders/{id}") public Object order(@PathParam("id") UUID id) { return customers.order(subject(),id); }
+    @POST @Path("/orders/{id}/returns") public Response requestReturn(@PathParam("id") UUID id,@NotNull @Valid Api.ReturnRequest input) {
+        returns.request(subject(),id,input);
+        return Response.status(201).entity(customers.order(subject(),id)).build();
+    }
 }
