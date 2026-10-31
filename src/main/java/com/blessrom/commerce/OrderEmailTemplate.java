@@ -106,7 +106,7 @@ final class OrderEmailTemplate {
             case "RETURN_APPROVED" -> "Aprobamos tu devolución o cambio";
             case "RETURN_REJECTED" -> "Revisamos tu solicitud";
             case "RETURN_RECEIVED" -> "Recibimos los productos devueltos";
-            case "RETURN_REFUNDED" -> "Tu reembolso fue registrado";
+            case "RETURN_REFUNDED" -> "Tu reembolso fue procesado";
             case "RETURN_EXCHANGED" -> "Tu cambio fue completado";
             case "CANCELLED" -> "Tu pedido fue cancelado";
             case "EXPIRED" -> "La reserva de tu pedido venció";
@@ -127,7 +127,7 @@ final class OrderEmailTemplate {
             case "RETURN_APPROVED" -> "Solicitud aprobada";
             case "RETURN_REJECTED" -> "Solicitud rechazada";
             case "RETURN_RECEIVED" -> "Devolución recibida";
-            case "RETURN_REFUNDED" -> "Reembolso registrado";
+            case "RETURN_REFUNDED" -> "Reembolso procesado";
             case "RETURN_EXCHANGED" -> "Cambio completado";
             case "CANCELLED" -> "Cancelado";
             case "EXPIRED" -> "Reserva vencida";
@@ -148,7 +148,7 @@ final class OrderEmailTemplate {
             case "RETURN_APPROVED" -> "Tu solicitud fue aprobada. Sigue las indicaciones incluidas en la observación.";
             case "RETURN_REJECTED" -> "Terminamos de revisar la solicitud y encontrarás el motivo en la observación.";
             case "RETURN_RECEIVED" -> "Confirmamos la recepción de los productos asociados a tu solicitud.";
-            case "RETURN_REFUNDED" -> "El reembolso fue registrado correctamente.";
+            case "RETURN_REFUNDED" -> "El reembolso fue procesado correctamente.";
             case "RETURN_EXCHANGED" -> "El cambio solicitado fue completado correctamente.";
             case "CANCELLED" -> "El pedido fue cancelado y el inventario reservado quedó liberado.";
             case "EXPIRED" -> "El plazo de reserva terminó antes de confirmarse el pago y el inventario quedó liberado.";
@@ -169,7 +169,7 @@ final class OrderEmailTemplate {
             case "RETURN_APPROVED" -> "Envía o entrega los productos siguiendo las instrucciones del equipo de Blessrom.";
             case "RETURN_REJECTED" -> "Puedes comunicarte con soporte si necesitas una aclaración adicional.";
             case "RETURN_RECEIVED" -> "Ahora verificaremos los productos y completaremos el reembolso o el cambio.";
-            case "RETURN_REFUNDED" -> "Conserva la referencia informada para realizar el seguimiento del abono.";
+            case "RETURN_REFUNDED" -> "Conserva la referencia informada. El tiempo de acreditación final depende del medio de pago.";
             case "RETURN_EXCHANGED" -> "Conserva la referencia informada para realizar el seguimiento del cambio.";
             case "CANCELLED", "EXPIRED" -> "Si todavía deseas los productos, puedes realizar un nuevo pedido sujeto a disponibilidad.";
             default -> "Puedes comunicarte con soporte si necesitas más información.";

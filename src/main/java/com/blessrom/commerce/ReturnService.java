@@ -3,6 +3,7 @@ package com.blessrom.commerce;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import jakarta.transaction.Transactional;
+import java.math.BigDecimal;
 import java.time.*;
 import java.util.*;
 
@@ -11,6 +12,7 @@ public class ReturnService {
     @Inject Db db;
     @Inject InventoryService inventory;
     @Inject NotificationService notifications;
+    @Inject MercadoPagoRefundService mercadoPagoRefunds;
 
     public UUID request(String subject,UUID orderId,Api.ReturnRequest input) {
         var order=db.one("SELECT id,status FROM orders WHERE id=? AND customer_subject=? FOR UPDATE",orderId,subject);
@@ -50,15 +52,34 @@ public class ReturnService {
         String requested=request.get("requested_resolution").toString();
         if(("REFUNDED".equals(to)&&!"REFUND".equals(requested))||("EXCHANGED".equals(to)&&!"EXCHANGE".equals(requested)))
             throw Problem.conflict("INVALID_RETURN_RESOLUTION","La resolución debe coincidir con lo aprobado para la solicitud.");
-        if(("REFUNDED".equals(to)||"EXCHANGED".equals(to))&&blank(input.reference())==null)
-            throw new Problem(400,"RESOLUTION_REFERENCE_REQUIRED","Registra la referencia del reembolso o del cambio.");
+        UUID orderId=Db.id(request,"order_id");
+        String reference=blank(input.reference());
+        MercadoPagoRefundService.Result providerRefund=null;
+        if("REFUNDED".equals(to)) {
+            var payment=db.one("SELECT method,status,provider_reference,external_payment_id FROM order_payments WHERE order_id=? FOR UPDATE",orderId);
+            if(!"APPROVED".equals(payment.get("status"))) throw Problem.conflict("REFUND_PAYMENT_NOT_APPROVED","El pedido no tiene un pago aprobado para reembolsar.");
+            if("MERCADO_PAGO".equals(payment.get("method"))) {
+                if(request.get("provider_refund_id")!=null) throw Problem.conflict("RETURN_ALREADY_REFUNDED","La devolución ya tiene un reembolso de Mercado Pago registrado.");
+                BigDecimal amount=refundAmount(id,orderId);
+                providerRefund=mercadoPagoRefunds.refund(text(payment.get("provider_reference")),text(payment.get("external_payment_id")),amount,id);
+                reference=providerRefund.id();
+            } else if(reference==null) throw new Problem(400,"RESOLUTION_REFERENCE_REQUIRED","Registra la referencia del reembolso manual.");
+        }
+        if("EXCHANGED".equals(to)&&reference==null)
+            throw new Problem(400,"RESOLUTION_REFERENCE_REQUIRED","Registra la referencia del cambio.");
         boolean restock=input.restock()&&Set.of("REFUNDED","EXCHANGED").contains(to);
         if(restock) restock(id,Db.id(request,"order_id"),actor);
-        db.execute("UPDATE order_returns SET status=?,admin_note=?,resolution_reference=?,restocked=?,resolved_at=CASE WHEN ? IN ('REFUNDED','EXCHANGED','REJECTED') THEN now() ELSE resolved_at END,updated_at=now(),version=version+1 WHERE id=? AND version=?",
-            to,input.note().trim(),blank(input.reference()),restock,to,id,input.version());
-        UUID orderId=Db.id(request,"order_id");
-        notifications.enqueue(orderId,"RETURN_"+to,input.note().trim()+(input.reference()==null?"":" · Referencia: "+input.reference().trim()));
+        db.execute("UPDATE order_returns SET status=?,admin_note=?,resolution_reference=?,restocked=?,provider_refund_id=?,refund_amount=?,refund_status=?,refund_requested_at=CASE WHEN ? IS NULL THEN refund_requested_at ELSE now() END,resolved_at=CASE WHEN ? IN ('REFUNDED','EXCHANGED','REJECTED') THEN now() ELSE resolved_at END,updated_at=now(),version=version+1 WHERE id=? AND version=?",
+            to,input.note().trim(),reference,restock,providerRefund==null?null:providerRefund.id(),providerRefund==null?null:providerRefund.amount(),providerRefund==null?null:providerRefund.status(),providerRefund==null?null:providerRefund.id(),to,id,input.version());
+        notifications.enqueue(orderId,"RETURN_"+to,input.note().trim()+(reference==null?"":" · Referencia: "+reference));
         return orderId;
+    }
+
+    private BigDecimal refundAmount(UUID returnId,UUID orderId) {
+        var row=db.one("SELECT COALESCE(SUM(i.quantity*o.unit_price),0) AS amount FROM order_return_items i JOIN order_items o ON o.order_id=? AND o.variant_id=i.variant_id WHERE i.return_id=?",orderId,returnId);
+        BigDecimal amount=new BigDecimal(row.get("amount").toString()).setScale(2);
+        if(amount.signum()<=0) throw Problem.conflict("INVALID_REFUND_AMOUNT","La devolución no contiene productos reembolsables.");
+        return amount;
     }
 
     private void restock(UUID returnId,UUID orderId,String actor) {
@@ -71,7 +92,7 @@ public class ReturnService {
     }
 
     public List<Map<String,Object>> listForOrder(UUID orderId) {
-        var requests=db.rows("SELECT id,version,status,requested_resolution,reason,admin_note,resolution_reference,restocked,created_at,updated_at,resolved_at FROM order_returns WHERE order_id=? ORDER BY created_at DESC",orderId);
+        var requests=db.rows("SELECT id,version,status,requested_resolution,reason,admin_note,resolution_reference,restocked,provider_refund_id,refund_amount,refund_status,refund_requested_at,created_at,updated_at,resolved_at FROM order_returns WHERE order_id=? ORDER BY created_at DESC",orderId);
         for(var request:requests) request.put("items",db.rows("SELECT r.variant_id,r.quantity,o.sku,o.name FROM order_return_items r JOIN order_returns x ON x.id=r.return_id JOIN order_items o ON o.order_id=x.order_id AND o.variant_id=r.variant_id WHERE r.return_id=? ORDER BY o.name",request.get("id")));
         return requests;
     }
@@ -85,4 +106,5 @@ public class ReturnService {
         };
     }
     private static String blank(String value) { return value==null||value.isBlank()?null:value.trim(); }
+    private static String text(Object value) { return value==null?null:value.toString(); }
 }
