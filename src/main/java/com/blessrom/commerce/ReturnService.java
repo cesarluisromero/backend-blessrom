@@ -69,8 +69,8 @@ public class ReturnService {
             throw new Problem(400,"RESOLUTION_REFERENCE_REQUIRED","Registra la referencia del cambio.");
         boolean restock=input.restock()&&Set.of("REFUNDED","EXCHANGED").contains(to);
         if(restock) restock(id,Db.id(request,"order_id"),actor);
-        db.execute("UPDATE order_returns SET status=?,admin_note=?,resolution_reference=?,restocked=?,provider_refund_id=?,refund_amount=?,refund_status=?,refund_requested_at=CASE WHEN ? IS NULL THEN refund_requested_at ELSE now() END,resolved_at=CASE WHEN ? IN ('REFUNDED','EXCHANGED','REJECTED') THEN now() ELSE resolved_at END,updated_at=now(),version=version+1 WHERE id=? AND version=?",
-            to,input.note().trim(),reference,restock,providerRefund==null?null:providerRefund.id(),providerRefund==null?null:providerRefund.amount(),providerRefund==null?null:providerRefund.status(),providerRefund==null?null:providerRefund.id(),to,id,input.version());
+        db.execute("UPDATE order_returns SET status=?,admin_note=?,resolution_reference=?,restocked=?,provider_refund_id=?,refund_amount=?,refund_status=?,refund_requested_at=CASE WHEN ? THEN now() ELSE refund_requested_at END,resolved_at=CASE WHEN ? IN ('REFUNDED','EXCHANGED','REJECTED') THEN now() ELSE resolved_at END,updated_at=now(),version=version+1 WHERE id=? AND version=?",
+            to,input.note().trim(),reference,restock,providerRefund==null?null:providerRefund.id(),providerRefund==null?null:providerRefund.amount(),providerRefund==null?null:providerRefund.status(),providerRefund!=null,to,id,input.version());
         notifications.enqueue(orderId,"RETURN_"+to,input.note().trim()+(reference==null?"":" · Referencia: "+reference));
         return orderId;
     }
