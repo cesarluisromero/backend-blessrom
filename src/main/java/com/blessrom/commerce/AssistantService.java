@@ -101,7 +101,7 @@ public class AssistantService {
         return null;
     }
 
-    private static List<Map<String,Object>> recommend(String message,List<Map<String,Object>> products) {
+    static List<Map<String,Object>> recommend(String message,List<Map<String,Object>> products) {
         String query=normalize(message); var tokens=Arrays.stream(query.split("[^a-z0-9áéíóúñ]+" )).filter(t->t.length()>2).toList();
         var grouped=new LinkedHashMap<String,Map<String,Object>>();
         for(var row:products) {
@@ -113,7 +113,11 @@ public class AssistantService {
             if(card==null) { card=new LinkedHashMap<>();card.put("id",id);card.put("slug",row.get("slug"));card.put("name",row.get("name"));card.put("imageUrl",row.get("image_url"));card.put("price",formatPrice(row.get("price")));card.put("available",available);card.put("score",score);grouped.put(id,card); }
             else { if(new BigDecimal(row.get("price").toString()).compareTo(new BigDecimal(card.get("price").toString()))<0)card.put("price",formatPrice(row.get("price")));card.put("available",((Number)card.get("available")).intValue()+available);card.put("score",Math.max(((Number)card.get("score")).longValue(),score)); }
         }
-        return grouped.values().stream().sorted(Comparator.<Map<String,Object>>comparingLong(p->((Number)p.get("score")).longValue()).reversed()).limit(4).map(card->{card.remove("score");return card;}).toList();
+        long bestScore=grouped.values().stream().mapToLong(card->((Number)card.get("score")).longValue()).max().orElse(0);
+        return grouped.values().stream()
+            .filter(card->bestScore==0||((Number)card.get("score")).longValue()==bestScore)
+            .sorted(Comparator.<Map<String,Object>>comparingLong(p->((Number)p.get("score")).longValue()).reversed())
+            .limit(4).map(card->{card.remove("score");return card;}).toList();
     }
     private static String normalize(Object value){return String.valueOf(value).toLowerCase(Locale.ROOT);}
     private static String formatPrice(Object value){return new BigDecimal(value.toString()).setScale(2,RoundingMode.HALF_UP).toPlainString();}
