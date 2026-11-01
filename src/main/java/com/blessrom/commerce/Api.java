@@ -62,6 +62,14 @@ public final class Api {
         @Min(1) Integer usageLimit,@NotNull Instant startsAt,@NotNull Instant endsAt,boolean active) {}
     public record UpdatePromotion(@Min(0) long version,@NotNull @Valid Promotion promotion) {}
     public record Quantity(@Min(1) @Max(100) int quantity) {}
+    @RegisterForReflection
+    public record AssistantTurn(
+        @NotBlank @Pattern(regexp="user|assistant") String role,
+        @NotBlank @Size(max=1200) String content) {}
+    @RegisterForReflection
+    public record AssistantRequest(
+        @NotBlank @Size(max=800) String message,
+        @Size(max=8) List<@NotNull @Valid AssistantTurn> history) {}
     public record CustomerProfile(@NotBlank @Email @Size(max=254) String email,
         @NotBlank @Size(max=100) String firstName,@NotBlank @Size(max=100) String lastName,
         @NotBlank @Pattern(regexp="[0-9+ ()-]{7,30}") String phone) {}
