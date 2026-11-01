@@ -11,6 +11,9 @@ import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import java.net.URI;
 import java.net.URLEncoder;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.*;
@@ -36,6 +39,8 @@ public class MediaService {
     public record UploadedObject(@NotBlank @Pattern(regexp="original|large|medium|thumbnail") String variant,
         @Min(1) @Max(10000) int width,@Min(1) @Max(10000) int height,@Min(1) @Max(10_485_760) long byteSize) {}
     public record CompleteUpload(@NotNull @Size(min=4,max=4) List<@NotNull @Valid UploadedObject> objects) {}
+    public record UpdateMedia(@Size(max=300) String altText,Boolean primary) {}
+    public record MediaOrder(@NotNull @Size(min=1,max=50) List<@NotNull UUID> assetIds) {}
 
     public Map<String,Object> start(UUID productId,StartUpload input) {
         requireConfigured();
@@ -48,7 +53,7 @@ public class MediaService {
         for(String variant:VARIANTS) {
             String key="products/"+productId+"/"+assetId+"/"+variant+".webp";
             db.execute("INSERT INTO media_objects(asset_id,variant,object_key) VALUES(?,?,?)",assetId,variant,key);
-            uploads.add(Map.of("variant",variant,"objectKey",key,"uploadUrl",presignPut(key),"contentType","image/webp"));
+            uploads.add(Map.of("variant",variant,"objectKey",key,"uploadUrl",presign("PUT",key,true),"contentType","image/webp"));
         }
         return Map.of("assetId",assetId,"expiresIn",expirySeconds,"uploads",uploads);
     }
@@ -67,8 +72,39 @@ public class MediaService {
             db.execute("UPDATE media_objects SET width=?,height=?,byte_size=? WHERE asset_id=? AND variant=?",
                 value.width(),value.height(),value.byteSize(),assetId,variant);
         }
-        db.execute("UPDATE media_assets SET status='READY',ready_at=now() WHERE id=?",assetId);
+        db.execute("UPDATE media_assets SET status='READY',ready_at=now(),is_primary=NOT EXISTS(SELECT 1 FROM media_assets WHERE product_id=? AND status='READY' AND is_primary) WHERE id=?",productId,assetId);
         return asset(productId,assetId);
+    }
+
+    public Map<String,Object> update(UUID productId,UUID assetId,UpdateMedia input) {
+        var current=db.one("SELECT * FROM media_assets WHERE id=? AND product_id=? AND status='READY' FOR UPDATE",assetId,productId);
+        String alt=input.altText()==null?(String)current.get("alt_text"):input.altText().trim();
+        if(Boolean.TRUE.equals(input.primary())) {
+            db.execute("UPDATE media_assets SET is_primary=false WHERE product_id=? AND status='READY' AND is_primary",productId);
+            db.execute("UPDATE media_assets SET alt_text=?,is_primary=true WHERE id=?",alt,assetId);
+        } else db.execute("UPDATE media_assets SET alt_text=? WHERE id=?",alt,assetId);
+        return asset(productId,assetId);
+    }
+
+    public List<Map<String,Object>> reorder(UUID productId,MediaOrder input) {
+        db.one("SELECT id FROM products WHERE id=?",productId);
+        var current=db.rows("SELECT id FROM media_assets WHERE product_id=? AND status='READY'",productId)
+            .stream().map(row->Db.id(row,"id")).collect(java.util.stream.Collectors.toSet());
+        var requested=new LinkedHashSet<>(input.assetIds());
+        if(requested.size()!=input.assetIds().size()||!requested.equals(current))
+            throw new Problem(400,"INVALID_MEDIA_ORDER","El orden debe incluir cada imagen disponible una sola vez.");
+        for(int index=0;index<input.assetIds().size();index++)
+            db.execute("UPDATE media_assets SET display_order=? WHERE id=? AND product_id=?",index,input.assetIds().get(index),productId);
+        return list(productId);
+    }
+
+    public void delete(UUID productId,UUID assetId) {
+        requireConfigured();
+        var current=db.one("SELECT * FROM media_assets WHERE id=? AND product_id=? AND status='READY' FOR UPDATE",assetId,productId);
+        var objects=db.rows("SELECT object_key FROM media_objects WHERE asset_id=?",assetId);
+        for(var object:objects) deleteObject(String.valueOf(object.get("object_key")));
+        db.execute("UPDATE media_assets SET status='DELETED',is_primary=false WHERE id=?",assetId);
+        if(Boolean.TRUE.equals(current.get("is_primary"))) db.execute("UPDATE media_assets SET is_primary=true WHERE id=(SELECT id FROM media_assets WHERE product_id=? AND status='READY' ORDER BY display_order,created_at LIMIT 1)",productId);
     }
 
     public List<Map<String,Object>> list(UUID productId) {
@@ -93,7 +129,7 @@ public class MediaService {
 
     private String publicUrl(String key) { return publicBaseUrl.replaceAll("/+$","")+"/"+path(key); }
 
-    private String presignPut(String key) {
+    private String presign(String method,String key,boolean contentType) {
         try {
             URI base=URI.create(endpoint.replaceAll("/+$",""));
             Instant now=Instant.now();String date=DATE.format(now),amzDate=AMZ_DATE.format(now);
@@ -105,16 +141,26 @@ public class MediaService {
             String configuredSecretKey=secretKey.orElseThrow();
             query.put("X-Amz-Credential",configuredAccessKey+"/"+scope);
             query.put("X-Amz-Date",amzDate);query.put("X-Amz-Expires",String.valueOf(expirySeconds));
-            query.put("X-Amz-SignedHeaders","content-type;host");
+            String signedHeaders=contentType?"content-type;host":"host";
+            query.put("X-Amz-SignedHeaders",signedHeaders);
             String canonicalQuery=query.entrySet().stream().map(e->encode(e.getKey())+"="+encode(e.getValue())).reduce((a,b)->a+"&"+b).orElse("");
-            String headers="content-type:image/webp\n"+"host:"+base.getAuthority()+"\n";
-            String request="PUT\n"+canonicalUri+"\n"+canonicalQuery+"\n"+headers+"\ncontent-type;host\nUNSIGNED-PAYLOAD";
+            String headers=(contentType?"content-type:image/webp\n":"")+"host:"+base.getAuthority()+"\n";
+            String request=method+"\n"+canonicalUri+"\n"+canonicalQuery+"\n"+headers+"\n"+signedHeaders+"\nUNSIGNED-PAYLOAD";
             String toSign="AWS4-HMAC-SHA256\n"+amzDate+"\n"+scope+"\n"+hex(sha256(request.getBytes(StandardCharsets.UTF_8)));
             byte[] keyDate=hmac(("AWS4"+configuredSecretKey).getBytes(StandardCharsets.UTF_8),date);
             byte[] keyRegion=hmac(keyDate,"auto"),keyService=hmac(keyRegion,"s3"),keySigning=hmac(keyService,"aws4_request");
             String signature=hex(hmac(keySigning,toSign));
             return base+canonicalUri+"?"+canonicalQuery+"&X-Amz-Signature="+signature;
         } catch(Exception e) { throw new IllegalStateException("No se pudo firmar la carga a R2",e); }
+    }
+
+    private void deleteObject(String key) {
+        try {
+            var request=HttpRequest.newBuilder(URI.create(presign("DELETE",key,false))).DELETE().timeout(Duration.ofSeconds(15)).build();
+            int status=HttpClient.newHttpClient().send(request,HttpResponse.BodyHandlers.discarding()).statusCode();
+            if(status!=404&&(status<200||status>=300)) throw new IllegalStateException("R2 rechazó la eliminación con estado "+status);
+        } catch(InterruptedException e) { Thread.currentThread().interrupt();throw new IllegalStateException("Se interrumpió la eliminación en R2",e); }
+        catch(Exception e) { throw new IllegalStateException("No se pudo eliminar el objeto de R2",e); }
     }
 
     private static String path(String value) { return Arrays.stream(value.split("/",-1)).map(MediaService::encode).reduce((a,b)->a+"/"+b).orElse(""); }

@@ -87,8 +87,29 @@ public class CatalogService {
     }
     public Map<String,Object> publicProduct(UUID id) {
         var p=db.one("SELECT p.*,r.content FROM products p JOIN product_revisions r ON r.id=p.published_revision WHERE p.id=? AND p.archived=false",id);
-        Object raw=p.remove("content");p.put("content",content(id,raw,true));return p;
+        Object raw=p.remove("content");
+        var content=content(id,raw,true);
+        var media=publicMedia(id);
+        if(!media.isEmpty()) {
+            content.put("media",media);
+            @SuppressWarnings("unchecked") var urls=(Map<String,String>)media.getFirst().get("urls");
+            content.put("imageUrl",urls.get("medium"));
+        }
+        p.put("content",content);return p;
     }
+    private List<Map<String,Object>> publicMedia(UUID productId) {
+        var assets=db.rows("SELECT id,alt_text,is_primary FROM media_assets WHERE product_id=? AND status='READY' ORDER BY is_primary DESC,display_order,created_at",productId);
+        for(var asset:assets) {
+            var urls=new LinkedHashMap<String,String>();
+            for(var object:db.rows("SELECT variant,object_key FROM media_objects WHERE asset_id=? ORDER BY variant",asset.get("id")))
+                urls.put(String.valueOf(object.get("variant")),mediaUrl(String.valueOf(object.get("object_key"))));
+            asset.put("urls",urls);
+        }
+        return assets;
+    }
+    @org.eclipse.microprofile.config.inject.ConfigProperty(name="blessrom.media.public-base-url",defaultValue="https://media.blessrom.com")
+    String mediaBaseUrl;
+    private String mediaUrl(String key) { return mediaBaseUrl.replaceAll("/+$","")+"/"+key; }
     private Map<String,Object> content(UUID productId,Object raw,boolean publicOnly) {
         Api.Draft draft=json.read(raw,Api.Draft.class);
         var data=new LinkedHashMap<String,Object>();

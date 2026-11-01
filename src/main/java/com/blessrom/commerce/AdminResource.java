@@ -37,6 +37,13 @@ public class AdminResource {
     }
     @POST @Path("/products/{id}/media/{assetId}/complete") public Object completeMedia(@PathParam("id") UUID id,@PathParam("assetId") UUID assetId,
         @NotNull @Valid MediaService.CompleteUpload input) { return media.complete(id,assetId,input); }
+    @PUT @Path("/products/{id}/media/{assetId}") public Object updateMedia(@PathParam("id") UUID id,@PathParam("assetId") UUID assetId,
+        @NotNull @Valid MediaService.UpdateMedia input) { return media.update(id,assetId,input); }
+    @PUT @Path("/products/{id}/media-order") public Object orderMedia(@PathParam("id") UUID id,
+        @NotNull @Valid MediaService.MediaOrder input) { return media.reorder(id,input); }
+    @DELETE @Path("/products/{id}/media/{assetId}") public void deleteMedia(@PathParam("id") UUID id,@PathParam("assetId") UUID assetId) {
+        media.delete(id,assetId);
+    }
     @GET @Path("/inventory/{id}") public Object stock(@PathParam("id") UUID id) { return inventory.get(id); }
     @POST @Path("/inventory/{id}/adjustments") public Object adjust(@PathParam("id") UUID id,@NotNull @Valid Api.Adjustment input) { return inventory.adjust(id,input,identity.getPrincipal().getName()); }
     @GET @Path("/inventory/{id}/movements") public Object movements(@PathParam("id") UUID id,@QueryParam("page") @DefaultValue("0") int page,@QueryParam("size") @DefaultValue("20") int size) { return inventory.movements(id,page,size); }
