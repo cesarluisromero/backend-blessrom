@@ -27,8 +27,8 @@ public class MediaService {
     @ConfigProperty(name="blessrom.media.r2.enabled",defaultValue="false") boolean enabled;
     @ConfigProperty(name="blessrom.media.r2.endpoint",defaultValue="https://invalid.r2.cloudflarestorage.com") String endpoint;
     @ConfigProperty(name="blessrom.media.r2.bucket",defaultValue="blessrom-media-production") String bucket;
-    @ConfigProperty(name="blessrom.media.r2.access-key-id",defaultValue="") String accessKey;
-    @ConfigProperty(name="blessrom.media.r2.secret-access-key",defaultValue="") String secretKey;
+    @ConfigProperty(name="blessrom.media.r2.access-key-id") Optional<String> accessKey;
+    @ConfigProperty(name="blessrom.media.r2.secret-access-key") Optional<String> secretKey;
     @ConfigProperty(name="blessrom.media.public-base-url",defaultValue="https://media.blessrom.com") String publicBaseUrl;
     @ConfigProperty(name="blessrom.media.upload-expiry-seconds",defaultValue="600") int expirySeconds;
 
@@ -86,7 +86,7 @@ public class MediaService {
     }
 
     private void requireConfigured() {
-        if(!enabled||accessKey.isBlank()||secretKey.isBlank())
+        if(!enabled||accessKey.filter(value->!value.isBlank()).isEmpty()||secretKey.filter(value->!value.isBlank()).isEmpty())
             throw new Problem(503,"MEDIA_STORAGE_DISABLED","Cloudflare R2 todavía no está configurado.");
         if(expirySeconds<60||expirySeconds>3600) throw new IllegalStateException("R2 upload expiry must be between 60 and 3600 seconds");
     }
@@ -101,14 +101,16 @@ public class MediaService {
             String canonicalUri="/"+path(bucket)+"/"+path(key);
             var query=new TreeMap<String,String>();
             query.put("X-Amz-Algorithm","AWS4-HMAC-SHA256");
-            query.put("X-Amz-Credential",accessKey+"/"+scope);
+            String configuredAccessKey=accessKey.orElseThrow();
+            String configuredSecretKey=secretKey.orElseThrow();
+            query.put("X-Amz-Credential",configuredAccessKey+"/"+scope);
             query.put("X-Amz-Date",amzDate);query.put("X-Amz-Expires",String.valueOf(expirySeconds));
             query.put("X-Amz-SignedHeaders","content-type;host");
             String canonicalQuery=query.entrySet().stream().map(e->encode(e.getKey())+"="+encode(e.getValue())).reduce((a,b)->a+"&"+b).orElse("");
             String headers="content-type:image/webp\n"+"host:"+base.getAuthority()+"\n";
             String request="PUT\n"+canonicalUri+"\n"+canonicalQuery+"\n"+headers+"\ncontent-type;host\nUNSIGNED-PAYLOAD";
             String toSign="AWS4-HMAC-SHA256\n"+amzDate+"\n"+scope+"\n"+hex(sha256(request.getBytes(StandardCharsets.UTF_8)));
-            byte[] keyDate=hmac(("AWS4"+secretKey).getBytes(StandardCharsets.UTF_8),date);
+            byte[] keyDate=hmac(("AWS4"+configuredSecretKey).getBytes(StandardCharsets.UTF_8),date);
             byte[] keyRegion=hmac(keyDate,"auto"),keyService=hmac(keyRegion,"s3"),keySigning=hmac(keyService,"aws4_request");
             String signature=hex(hmac(keySigning,toSign));
             return base+canonicalUri+"?"+canonicalQuery+"&X-Amz-Signature="+signature;
