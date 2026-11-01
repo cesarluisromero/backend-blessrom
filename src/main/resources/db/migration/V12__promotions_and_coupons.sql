@@ -15,7 +15,21 @@ CREATE TABLE promotions (
   CHECK (discount_type <> 'PERCENT' OR discount_value <= 100)
 );
 
-ALTER TABLE orders DROP CONSTRAINT orders_total_check;
+DO $$
+DECLARE total_constraint record;
+BEGIN
+  FOR total_constraint IN
+    SELECT conname
+    FROM pg_constraint
+    WHERE conrelid = 'orders'::regclass
+      AND contype = 'c'
+      AND pg_get_constraintdef(oid) LIKE '%total%'
+      AND pg_get_constraintdef(oid) LIKE '%subtotal%'
+      AND pg_get_constraintdef(oid) LIKE '%shipping%'
+  LOOP
+    EXECUTE format('ALTER TABLE orders DROP CONSTRAINT %I', total_constraint.conname);
+  END LOOP;
+END $$;
 ALTER TABLE orders
   ADD COLUMN discount numeric(14,2) NOT NULL DEFAULT 0 CHECK (discount >= 0 AND discount <= subtotal),
   ADD COLUMN promotion_id uuid REFERENCES promotions(id),
