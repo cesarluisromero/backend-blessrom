@@ -17,6 +17,7 @@ public class AdminResource {
     @Inject PaymentService payments;
     @Inject ReturnService returns;
     @Inject PromotionService promotions;
+    @Inject ReportService reports;
     @Inject SecurityIdentity identity;
     @POST @Path("/categories") public Response category(@NotNull @Valid Api.Category input) { return Response.status(201).entity(catalog.createCategory(input)).build(); }
     @GET @Path("/products") public Object products(@QueryParam("page") @DefaultValue("0") int page,@QueryParam("size") @DefaultValue("20") int size) { return catalog.list(true,page,size,null,null); }
@@ -37,6 +38,7 @@ public class AdminResource {
     @GET @Path("/promotions") public Object promotions() { return promotions.list(); }
     @POST @Path("/promotions") public Response promotion(@NotNull @Valid Api.Promotion input) { return Response.status(201).entity(promotions.create(input)).build(); }
     @PUT @Path("/promotions/{id}") public Object promotion(@PathParam("id") UUID id,@NotNull @Valid Api.UpdatePromotion input) { return promotions.update(id,input); }
+    @GET @Path("/reports/dashboard") public Object dashboard(@QueryParam("days") @DefaultValue("30") int days) { return reports.dashboard(days); }
     @GET @Path("/orders") public Object orders(@QueryParam("page") @DefaultValue("0") int page,@QueryParam("size") @DefaultValue("20") int size) { return orders.list(page,size); }
     @GET @Path("/orders/{id}") public Object order(@PathParam("id") UUID id) { return orders.adminGet(id); }
     @PUT @Path("/orders/{id}/shipment") public Object shipment(@PathParam("id") UUID id,@NotNull @Valid Api.Shipment input) { return orders.saveShipment(id,input,identity.getPrincipal().getName()); }
