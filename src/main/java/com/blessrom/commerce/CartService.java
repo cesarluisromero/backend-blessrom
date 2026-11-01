@@ -11,6 +11,7 @@ import java.util.*;
 public class CartService {
     @Inject Db db;
     @Inject Json json;
+    @Inject PromotionService promotions;
     public Map<String,Object> create() {
         UUID id=UUID.randomUUID();String token=Tokens.create();Instant expiry=Instant.now().plus(30,ChronoUnit.DAYS);
         db.execute("INSERT INTO carts(id,token_hash,expires_at) VALUES(?,?,?)",id,Tokens.hash(token),expiry);
@@ -68,10 +69,11 @@ public class CartService {
         }
         return result;
     }
-    public Map<String,Object> quote(UUID id,String token,String district) {
-        active(authorize(id,token,true));return calculate(id,district);
+    public Map<String,Object> quote(UUID id,String token,String district,String coupon) {
+        active(authorize(id,token,true));return calculate(id,district,coupon,false);
     }
-    Map<String,Object> calculate(UUID id,String district) {
+    public Map<String,Object> quote(UUID id,String token,String district) { return quote(id,token,district,null); }
+    Map<String,Object> calculate(UUID id,String district,String coupon,boolean lockPromotion) {
         if(district==null||!district.matches("[0-9]{6}")) throw new Problem(400,"INVALID_DISTRICT","Indica el código UBIGEO del distrito.");
         // Same lock order in every checkout: cart, products, shipping rate, inventory.
         db.rows("SELECT id FROM products WHERE id IN (SELECT v.product_id FROM cart_items ci JOIN variants v ON v.id=ci.variant_id WHERE ci.cart_id=?) ORDER BY id FOR SHARE",id);
@@ -81,11 +83,14 @@ public class CartService {
         if(items.isEmpty()) throw Problem.conflict("EMPTY_CART","Agrega productos antes de finalizar la compra.");
         BigDecimal subtotal=items.stream().map(i->new BigDecimal(i.get("lineTotal").toString())).reduce(BigDecimal.ZERO,BigDecimal::add).setScale(2);
         BigDecimal shipping=(BigDecimal)rate.get("amount");
+        var promotion=promotions.apply(coupon,subtotal,lockPromotion);BigDecimal discount=promotion==null?BigDecimal.ZERO.setScale(2):promotion.discount();
         StringBuilder fingerprint=new StringBuilder(id.toString()).append('|').append(rate.get("id")).append('|').append(rate.get("version"));
         for(var item:items) fingerprint.append('|').append(item.get("variantId")).append('|').append(item.get("revision")).append('|').append(item.get("quantity")).append('|').append(item.get("unitPrice"));
-        return Map.of("cartId",id,"currency","PEN","items",items,"subtotal",subtotal.toPlainString(),
-            "shipping",shipping.toPlainString(),"total",subtotal.add(shipping).toPlainString(),"fingerprint",Tokens.hash(fingerprint.toString()),
-            "districtName",rate.get("district_name"));
+        if(promotion!=null)fingerprint.append("|promotion|").append(promotion.id()).append('|').append(promotion.version()).append('|').append(promotion.discount());
+        var result=new LinkedHashMap<String,Object>();result.put("cartId",id);result.put("currency","PEN");result.put("items",items);result.put("subtotal",subtotal.toPlainString());
+        result.put("discount",discount.toPlainString());result.put("couponCode",promotion==null?null:promotion.code());result.put("shipping",shipping.toPlainString());
+        result.put("total",subtotal.subtract(discount).add(shipping).toPlainString());result.put("fingerprint",Tokens.hash(fingerprint.toString()));result.put("districtName",rate.get("district_name"));
+        result.put("promotion",promotion==null?null:Map.of("id",promotion.id(),"code",promotion.code()));return result;
     }
 }
 

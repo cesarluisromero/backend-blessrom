@@ -17,7 +17,7 @@ public class CheckoutResource {
     @GET @Path("/carts/{id}") public Object cart(@PathParam("id") UUID id,@HeaderParam("X-Cart-Token") String token) { return carts.get(id,token); }
     @PUT @Path("/carts/{id}/items/{variantId}") public Object set(@PathParam("id") UUID id,@PathParam("variantId") UUID variant,@HeaderParam("X-Cart-Token") String token,@NotNull @Valid Api.Quantity input) { return carts.set(id,token,variant,input.quantity()); }
     @DELETE @Path("/carts/{id}/items/{variantId}") public void remove(@PathParam("id") UUID id,@PathParam("variantId") UUID variant,@HeaderParam("X-Cart-Token") String token) { carts.remove(id,token,variant); }
-    @GET @Path("/carts/{id}/quote") public Object quote(@PathParam("id") UUID id,@HeaderParam("X-Cart-Token") String token,@QueryParam("district") String district) { return carts.quote(id,token,district); }
+    @GET @Path("/carts/{id}/quote") public Object quote(@PathParam("id") UUID id,@HeaderParam("X-Cart-Token") String token,@QueryParam("district") String district,@QueryParam("coupon") String coupon) { return carts.quote(id,token,district,coupon); }
     @POST @Path("/carts/{id}/checkout") public Response checkout(@PathParam("id") UUID id,@HeaderParam("X-Cart-Token") String token,@HeaderParam("Idempotency-Key") String key,@NotNull @Valid Api.Checkout input) {
         var result=orders.checkout(id,token,key,input,identity.isAnonymous()?null:identity.getPrincipal().getName());
         return Response.status(result.replayed()?200:201).entity(result.order()).build();

@@ -77,7 +77,9 @@ public class ReturnService {
 
     private BigDecimal refundAmount(UUID returnId,UUID orderId) {
         var row=db.one("SELECT COALESCE(SUM(i.quantity*o.unit_price),0) AS amount FROM order_return_items i JOIN order_items o ON o.order_id=? AND o.variant_id=i.variant_id WHERE i.return_id=?",orderId,returnId);
-        BigDecimal amount=new BigDecimal(row.get("amount").toString()).setScale(2);
+        var order=db.one("SELECT subtotal,discount FROM orders WHERE id=?",orderId);
+        BigDecimal gross=new BigDecimal(row.get("amount").toString()),subtotal=new BigDecimal(order.get("subtotal").toString()),discount=new BigDecimal(order.get("discount").toString());
+        BigDecimal amount=discount.signum()==0?gross.setScale(2):gross.multiply(subtotal.subtract(discount)).divide(subtotal,2,java.math.RoundingMode.HALF_UP);
         if(amount.signum()<=0) throw Problem.conflict("INVALID_REFUND_AMOUNT","La devolución no contiene productos reembolsables.");
         return amount;
     }

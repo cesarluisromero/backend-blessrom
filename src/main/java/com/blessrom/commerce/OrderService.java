@@ -16,6 +16,7 @@ public class OrderService {
     @Inject InventoryService inventory;
     @Inject NotificationService notifications;
     @Inject ReturnService returns;
+    @Inject PromotionService promotions;
     @ConfigProperty(name="blessrom.reservation-minutes",defaultValue="30") int reservationMinutes;
     public record Result(Map<String,Object> order,boolean replayed) {}
     public Result checkout(UUID cartId,String token,String key,Api.Checkout input) { return checkout(cartId,token,key,input,null); }
@@ -31,7 +32,7 @@ public class OrderService {
             return new Result(view(Db.id(old,"id")),true);
         }
         carts.active(cart);
-        var quote=carts.calculate(cartId,input.districtCode());
+        var quote=carts.calculate(cartId,input.districtCode(),input.couponCode(),true);
         if(!input.quoteFingerprint().equals(quote.get("fingerprint")))
             throw Problem.conflict("QUOTE_CHANGED","Cambió la cotización. Consúltala y confirma los nuevos importes.");
         var items=(List<Map<String,Object>>)quote.get("items");
@@ -46,9 +47,12 @@ public class OrderService {
         customer.put("recipient",input.recipient());customer.put("email",input.email());customer.put("phone",input.phone());
         customer.put("address",input.address());customer.put("districtCode",input.districtCode());customer.put("districtName",quote.get("districtName"));
         if(customerSubject!=null) db.execute("INSERT INTO customer_profiles(subject) VALUES(?) ON CONFLICT(subject) DO NOTHING",customerSubject);
-        db.execute("INSERT INTO orders(id,cart_id,idempotency_key,request_hash,token_hash,access_expires_at,subtotal,shipping,total,customer,reservation_expires_at,customer_subject) VALUES(?,?,?,?,?,?,?,?,?,?::jsonb,?,?)",
+        @SuppressWarnings("unchecked") var promotion=(Map<String,Object>)quote.get("promotion");
+        db.execute("INSERT INTO orders(id,cart_id,idempotency_key,request_hash,token_hash,access_expires_at,subtotal,discount,shipping,total,promotion_id,coupon_code,customer,reservation_expires_at,customer_subject) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?::jsonb,?,?)",
             id,cartId,key,requestHash,cart.get("token_hash"),Instant.now().plus(30,ChronoUnit.DAYS),
-            new BigDecimal(quote.get("subtotal").toString()),new BigDecimal(quote.get("shipping").toString()),new BigDecimal(quote.get("total").toString()),json.write(customer),expiry,customerSubject);
+            new BigDecimal(quote.get("subtotal").toString()),new BigDecimal(quote.get("discount").toString()),new BigDecimal(quote.get("shipping").toString()),new BigDecimal(quote.get("total").toString()),
+            promotion==null?null:promotion.get("id"),quote.get("couponCode"),json.write(customer),expiry,customerSubject);
+        if(promotion!=null)promotions.redeem((UUID)promotion.get("id"),id);
         for(var item:items) {
             UUID variant=(UUID)item.get("variantId");int quantity=((Number)item.get("quantity")).intValue();
             db.execute("UPDATE inventory SET reserved=reserved+?,version=version+1 WHERE variant_id=?",quantity,variant);
@@ -168,6 +172,7 @@ public class OrderService {
             inventory.movement(variant,id,0,-quantity,"Liberación: "+status,actor);
         }
         db.execute("UPDATE orders SET status=?,version=version+1 WHERE id=?",status,id);
+        promotions.release(id);
         db.execute("UPDATE order_payments SET version=version+1,status='REJECTED',reviewed_at=now(),reviewed_by=?,review_note=? WHERE order_id=? AND status IN ('SUBMITTED','PENDING_PROVIDER')",actor,"Pedido "+status.toLowerCase(Locale.ROOT),id);
         history(id,status,actor);
         notifications.enqueue(id,status,null);
@@ -176,7 +181,7 @@ public class OrderService {
         db.execute("INSERT INTO order_history(id,order_id,status,actor) VALUES(?,?,?,?)",UUID.randomUUID(),id,status,actor);
     }
     private Map<String,Object> view(UUID id) {
-        var order=db.one("SELECT id,version,status,currency,subtotal,shipping,total,customer,created_at,reservation_expires_at FROM orders WHERE id=?",id);
+        var order=db.one("SELECT id,version,status,currency,subtotal,discount,shipping,total,coupon_code,customer,created_at,reservation_expires_at FROM orders WHERE id=?",id);
         order.put("customer",json.read(order.get("customer"),Map.class));
         var items=db.rows("SELECT variant_id,sku,name,attributes,quantity,unit_price,line_total FROM order_items WHERE order_id=? ORDER BY variant_id",id);
         for(var item:items) item.put("attributes",json.read(item.get("attributes"),Map.class));

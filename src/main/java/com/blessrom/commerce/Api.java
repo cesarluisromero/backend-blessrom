@@ -4,6 +4,7 @@ import jakarta.validation.Valid;
 import jakarta.validation.constraints.*;
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.time.Instant;
 import java.util.*;
 public final class Api {
     private Api() {}
@@ -53,6 +54,13 @@ public final class Api {
         @NotBlank @Pattern(regexp="[0-9]{6}") String districtCode,@NotBlank @Size(max=150) String districtName,
         @NotNull @DecimalMin("0") @Digits(integer=8,fraction=2) BigDecimal amount, boolean active) {}
     public record UpdateRate(@Min(0) long version, @NotNull @Valid Rate rate) {}
+    public record Promotion(@NotBlank @Size(max=150) String name,
+        @NotBlank @Pattern(regexp="[A-Za-z0-9_-]{3,40}") String code,
+        @NotBlank @Pattern(regexp="PERCENT|FIXED") String discountType,
+        @NotNull @DecimalMin("0.01") @Digits(integer=8,fraction=2) BigDecimal discountValue,
+        @NotNull @DecimalMin("0") @Digits(integer=8,fraction=2) BigDecimal minimumSubtotal,
+        @Min(1) Integer usageLimit,@NotNull Instant startsAt,@NotNull Instant endsAt,boolean active) {}
+    public record UpdatePromotion(@Min(0) long version,@NotNull @Valid Promotion promotion) {}
     public record Quantity(@Min(1) @Max(100) int quantity) {}
     public record CustomerProfile(@NotBlank @Email @Size(max=254) String email,
         @NotBlank @Size(max=100) String firstName,@NotBlank @Size(max=100) String lastName,
@@ -65,6 +73,9 @@ public final class Api {
     public record Checkout(@NotBlank @Size(max=150) String recipient, @NotBlank @Email @Size(max=254) String email,
         @NotBlank @Pattern(regexp="[0-9+ ()-]{7,30}") String phone, @NotBlank @Size(max=500) String address,
         @NotBlank @Pattern(regexp="[0-9]{6}") String districtCode,
-        @NotBlank @Pattern(regexp="[0-9a-f]{64}") String quoteFingerprint) {}
+        @NotBlank @Pattern(regexp="[0-9a-f]{64}") String quoteFingerprint,
+        @Size(max=40) @Pattern(regexp="[A-Za-z0-9_-]{3,40}") String couponCode) {
+        public Checkout(String recipient,String email,String phone,String address,String districtCode,String quoteFingerprint){this(recipient,email,phone,address,districtCode,quoteFingerprint,null);}
+    }
 }
 
