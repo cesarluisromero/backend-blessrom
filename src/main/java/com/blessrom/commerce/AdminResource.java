@@ -19,6 +19,7 @@ public class AdminResource {
     @Inject PromotionService promotions;
     @Inject ReportService reports;
     @Inject EmbeddingService embeddings;
+    @Inject MediaService media;
     @Inject SecurityIdentity identity;
     @POST @Path("/categories") public Response category(@NotNull @Valid Api.Category input) { return Response.status(201).entity(catalog.createCategory(input)).build(); }
     @GET @Path("/products") public Object products(@QueryParam("page") @DefaultValue("0") int page,@QueryParam("size") @DefaultValue("20") int size) { return catalog.list(true,page,size,null,null); }
@@ -30,6 +31,12 @@ public class AdminResource {
         if(version==null||version<0) throw new Problem(400,"VERSION_REQUIRED","Indica la versión actual.");
         catalog.archive(id,version);
     }
+    @GET @Path("/products/{id}/media") public Object media(@PathParam("id") UUID id) { return media.list(id); }
+    @POST @Path("/products/{id}/media/uploads") public Response startMedia(@PathParam("id") UUID id,@NotNull @Valid MediaService.StartUpload input) {
+        return Response.status(201).entity(media.start(id,input)).build();
+    }
+    @POST @Path("/products/{id}/media/{assetId}/complete") public Object completeMedia(@PathParam("id") UUID id,@PathParam("assetId") UUID assetId,
+        @NotNull @Valid MediaService.CompleteUpload input) { return media.complete(id,assetId,input); }
     @GET @Path("/inventory/{id}") public Object stock(@PathParam("id") UUID id) { return inventory.get(id); }
     @POST @Path("/inventory/{id}/adjustments") public Object adjust(@PathParam("id") UUID id,@NotNull @Valid Api.Adjustment input) { return inventory.adjust(id,input,identity.getPrincipal().getName()); }
     @GET @Path("/inventory/{id}/movements") public Object movements(@PathParam("id") UUID id,@QueryParam("page") @DefaultValue("0") int page,@QueryParam("size") @DefaultValue("20") int size) { return inventory.movements(id,page,size); }
