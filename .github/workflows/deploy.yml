@@ -20,7 +20,7 @@ jobs:
     timeout-minutes: 15
     services:
       postgres:
-        image: postgres:17
+        image: pgvector/pgvector:0.8.7-pg17-bookworm
         env:
           POSTGRES_USER: blessrom
           POSTGRES_PASSWORD: ci-test-only
@@ -66,7 +66,7 @@ jobs:
       image: ${{ steps.publish.outputs.image }}
     services:
       postgres:
-        image: postgres:17
+        image: pgvector/pgvector:0.8.7-pg17-bookworm
         env:
           POSTGRES_USER: blessrom
           POSTGRES_PASSWORD: ci-native-only

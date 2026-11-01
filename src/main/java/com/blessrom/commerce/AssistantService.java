@@ -12,7 +12,7 @@ import java.util.*;
 @ApplicationScoped
 public class AssistantService {
     private static final Logger LOG=Logger.getLogger(AssistantService.class);
-    @Inject Db db; @Inject Json json;
+    @Inject Db db; @Inject Json json; @Inject EmbeddingService embeddings;
     @ConfigProperty(name="blessrom.ai.enabled") boolean enabled;
     @ConfigProperty(name="blessrom.ai.api-key") Optional<String> apiKey;
     @ConfigProperty(name="blessrom.ai.model") String model;
@@ -20,7 +20,8 @@ public class AssistantService {
     private volatile HttpClient client;
 
     public Map<String,Object> reply(Api.AssistantRequest request) {
-        List<Map<String,Object>> products=products();
+        List<UUID> semanticIds=embeddings.semanticProductIds(request.message(),12);
+        List<Map<String,Object>> products=products(semanticIds);
         List<Map<String,Object>> recommendations=recommend(request.message(),products);
         if(!enabled||apiKey.isEmpty()||apiKey.get().isBlank()) return result(fallback(request.message(),recommendations),recommendations,false);
         try {
@@ -45,8 +46,13 @@ public class AssistantService {
     }
 
     @SuppressWarnings("unchecked")
-    private List<Map<String,Object>> products() {
-        return db.rows("""
+    private List<Map<String,Object>> products(List<UUID> semanticIds) {
+        String filter="";var args=new ArrayList<Object>();
+        if(!semanticIds.isEmpty()) {
+            filter=" AND p.id IN ("+String.join(",",Collections.nCopies(semanticIds.size(),"?"))+")";
+            args.addAll(semanticIds);
+        }
+        var rows=db.rows("""
             SELECT p.id,p.slug,pr.content->>'name' AS name,pr.content->>'description' AS description,
                    pr.content->>'imageUrl' AS image_url,v.sku,item->>'price' AS price,
                    item->'attributes' AS attributes,GREATEST(i.on_hand-i.reserved,0) AS available
@@ -54,8 +60,11 @@ public class AssistantService {
             JOIN variants v ON v.product_id=p.id JOIN inventory i ON i.variant_id=v.id
             JOIN LATERAL jsonb_array_elements(pr.content->'variants') item ON item->>'sku'=v.sku
             WHERE p.archived=false AND COALESCE((item->>'enabled')::boolean,true)=true
+            """+filter+"""
             ORDER BY pr.created_at DESC,p.slug,v.sku LIMIT 80
-            """);
+            """,args.toArray());
+        if(!semanticIds.isEmpty()) rows.sort(Comparator.comparingInt(row->semanticIds.indexOf((UUID)row.get("id"))));
+        return rows;
     }
 
     private String instructions(List<Map<String,Object>> products) {
