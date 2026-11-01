@@ -4,6 +4,8 @@ import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.jboss.logging.Logger;
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.net.URI;
 import java.net.http.*;
 import java.time.Duration;
@@ -72,7 +74,7 @@ public class AssistantService {
         var shipping=db.rows("SELECT district_name,amount FROM shipping_rates WHERE active=true ORDER BY district_name LIMIT 40");
         return """
             Eres el asistente de compras de Blessrom, una tienda peruana de moda nacida en Tarapoto y con posibilidad de ampliar a tecnología.
-            Responde en español, con calidez y en no más de 120 palabras. Usa PEN y muestra precios como S/. Recomienda únicamente artículos incluidos en el contexto.
+            Responde en español, con calidez y en no más de 120 palabras. Usa PEN y muestra siempre los precios con dos decimales, por ejemplo S/ 59.90. Recomienda únicamente artículos incluidos en el contexto.
             Nunca inventes productos, stock, precios, descuentos, plazos ni políticas. Si falta información, dilo y dirige al catálogo o a contacto.
             No solicites contraseñas, tarjetas ni datos sensibles. La compra y el pago siempre deben completarse en el sitio web.
             Si la consulta no trata de productos, pedidos, envíos, promociones o la tienda, responde brevemente que solo ayudas con compras Blessrom.
@@ -108,12 +110,13 @@ public class AssistantService {
             long score=tokens.stream().filter(haystack::contains).count();
             String id=row.get("id").toString();
             var card=grouped.get(id);
-            if(card==null) { card=new LinkedHashMap<>();card.put("id",id);card.put("slug",row.get("slug"));card.put("name",row.get("name"));card.put("imageUrl",row.get("image_url"));card.put("price",row.get("price"));card.put("available",available);card.put("score",score);grouped.put(id,card); }
-            else { if(Double.parseDouble(row.get("price").toString())<Double.parseDouble(card.get("price").toString()))card.put("price",row.get("price"));card.put("available",((Number)card.get("available")).intValue()+available);card.put("score",Math.max(((Number)card.get("score")).longValue(),score)); }
+            if(card==null) { card=new LinkedHashMap<>();card.put("id",id);card.put("slug",row.get("slug"));card.put("name",row.get("name"));card.put("imageUrl",row.get("image_url"));card.put("price",formatPrice(row.get("price")));card.put("available",available);card.put("score",score);grouped.put(id,card); }
+            else { if(new BigDecimal(row.get("price").toString()).compareTo(new BigDecimal(card.get("price").toString()))<0)card.put("price",formatPrice(row.get("price")));card.put("available",((Number)card.get("available")).intValue()+available);card.put("score",Math.max(((Number)card.get("score")).longValue(),score)); }
         }
         return grouped.values().stream().sorted(Comparator.<Map<String,Object>>comparingLong(p->((Number)p.get("score")).longValue()).reversed()).limit(4).map(card->{card.remove("score");return card;}).toList();
     }
     private static String normalize(Object value){return String.valueOf(value).toLowerCase(Locale.ROOT);}
+    private static String formatPrice(Object value){return new BigDecimal(value.toString()).setScale(2,RoundingMode.HALF_UP).toPlainString();}
     private static String fallback(String message,List<Map<String,Object>> products) {
         if(products.isEmpty()) return "En este momento no encuentro prendas con stock disponible. Puedes revisar el catálogo o volver a consultarme en unos minutos.";
         String names=products.stream().map(p->p.get("name")+" (S/ "+p.get("price")+")").reduce((a,b)->a+", "+b).orElse("");
