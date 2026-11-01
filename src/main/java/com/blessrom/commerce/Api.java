@@ -10,7 +10,18 @@ public final class Api {
     private Api() {}
     @RegisterForReflection
     public record Category(@NotBlank @Size(max=100) String name,
-        @NotBlank @Size(max=100) @Pattern(regexp="[a-z0-9]+(?:-[a-z0-9]+)*") String slug) {}
+        @NotBlank @Size(max=100) @Pattern(regexp="[a-z0-9]+(?:-[a-z0-9]+)*") String slug,
+        UUID parentId,@Size(max=500) String description,@Min(0) Integer displayOrder,Boolean active) {
+        public Category(String name,String slug){this(name,slug,null,"",0,true);}
+    }
+    public record Collection(@NotBlank @Size(max=120) String name,
+        @NotBlank @Size(max=120) @Pattern(regexp="[a-z0-9]+(?:-[a-z0-9]+)*") String slug,
+        @Size(max=500) String description,Instant startsAt,Instant endsAt,@Min(0) Integer displayOrder,Boolean active) {}
+    public record AttributeDefinition(@NotBlank @Size(max=40) @Pattern(regexp="[a-z0-9]+(?:-[a-z0-9]+)*") String code,
+        @NotBlank @Size(max=80) String name,@NotBlank @Pattern(regexp="TEXT|SIZE|COLOR") String type,
+        Boolean filterable,@Min(0) Integer displayOrder,Boolean active) {}
+    public record AttributeOption(@NotBlank @Size(max=100) String value,@NotBlank @Size(max=100) String label,
+        @Pattern(regexp="#[0-9A-Fa-f]{6}") String swatch,@Min(0) Integer displayOrder,Boolean active) {}
     @RegisterForReflection
     public record Variant(@NotBlank @Size(max=80) @Pattern(regexp="[A-Za-z0-9_-]+") String sku,
         @NotNull @Size(max=20) Map<@NotBlank @Size(max=40) String,@NotBlank @Size(max=100) String> attributes,
@@ -18,7 +29,10 @@ public final class Api {
     @RegisterForReflection
     public record Draft(@NotBlank @Size(max=180) String name, @NotNull @Size(max=5000) String description,
         @NotNull UUID categoryId, @Size(max=2000) @Pattern(regexp="https://[^\\s]+") String imageUrl,
-        @NotNull @Size(min=1,max=50) List<@NotNull @Valid Variant> variants) {}
+        @NotNull @Size(min=1,max=50) List<@NotNull @Valid Variant> variants,
+        @Size(max=20) List<@NotNull UUID> collectionIds) {
+        public Draft(String name,String description,UUID categoryId,String imageUrl,List<Variant> variants){this(name,description,categoryId,imageUrl,variants,List.of());}
+    }
     public record CreateProduct(@NotBlank @Size(max=120) @Pattern(regexp="[a-z0-9]+(?:-[a-z0-9]+)*") String slug,
         @NotNull @Valid Draft draft) {}
     public record UpdateDraft(@Min(0) long version, @NotNull @Valid Draft draft) {}

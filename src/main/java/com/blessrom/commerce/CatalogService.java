@@ -10,11 +10,47 @@ import java.util.*;
 public class CatalogService {
     @Inject Db db;
     @Inject Json json;
-    public List<Map<String,Object>> categories() { return db.rows("SELECT * FROM categories ORDER BY name"); }
+    public List<Map<String,Object>> categories() { return db.rows("SELECT * FROM categories WHERE active=true ORDER BY display_order,name"); }
+    public List<Map<String,Object>> adminCategories() { return db.rows("SELECT * FROM categories ORDER BY display_order,name"); }
     public Map<String,Object> createCategory(Api.Category input) {
         UUID id=UUID.randomUUID();
-        db.execute("INSERT INTO categories(id,name,slug) VALUES(?,?,?)",id,input.name(),input.slug());
+        if(input.parentId()!=null) db.one("SELECT id FROM categories WHERE id=?",input.parentId());
+        db.execute("INSERT INTO categories(id,name,slug,parent_id,description,display_order,active) VALUES(?,?,?,?,?,?,?)",id,input.name(),input.slug(),input.parentId(),
+            Objects.requireNonNullElse(input.description(),""),Objects.requireNonNullElse(input.displayOrder(),0),Objects.requireNonNullElse(input.active(),true));
         return db.one("SELECT * FROM categories WHERE id=?",id);
+    }
+    public List<Map<String,Object>> collections(boolean admin) {
+        String where=admin?"":" WHERE active=true AND (starts_at IS NULL OR starts_at<=now()) AND (ends_at IS NULL OR ends_at>now())";
+        return db.rows("SELECT * FROM collections"+where+" ORDER BY display_order,name");
+    }
+    public Map<String,Object> createCollection(Api.Collection input) {
+        if(input.startsAt()!=null&&input.endsAt()!=null&&!input.endsAt().isAfter(input.startsAt()))
+            throw new Problem(400,"INVALID_COLLECTION_DATES","La fecha final debe ser posterior a la fecha inicial.");
+        UUID id=UUID.randomUUID();
+        db.execute("INSERT INTO collections(id,name,slug,description,starts_at,ends_at,display_order,active) VALUES(?,?,?,?,?,?,?,?)",id,input.name(),input.slug(),
+            Objects.requireNonNullElse(input.description(),""),input.startsAt(),input.endsAt(),Objects.requireNonNullElse(input.displayOrder(),0),Objects.requireNonNullElse(input.active(),true));
+        return db.one("SELECT * FROM collections WHERE id=?",id);
+    }
+    public List<Map<String,Object>> attributes(boolean admin) {
+        String where=admin?"":" WHERE d.active=true";
+        var definitions=db.rows("SELECT d.* FROM attribute_definitions d"+where+" ORDER BY d.display_order,d.name");
+        for(var definition:definitions) {
+            String optionWhere=admin?"":" AND active=true";
+            definition.put("options",db.rows("SELECT * FROM attribute_options WHERE attribute_id=?"+optionWhere+" ORDER BY display_order,label",definition.get("id")));
+        }
+        return definitions;
+    }
+    public Map<String,Object> createAttribute(Api.AttributeDefinition input) {
+        UUID id=UUID.randomUUID();
+        db.execute("INSERT INTO attribute_definitions(id,code,name,type,filterable,display_order,active) VALUES(?,?,?,?,?,?,?)",id,input.code(),input.name(),input.type(),
+            Objects.requireNonNullElse(input.filterable(),true),Objects.requireNonNullElse(input.displayOrder(),0),Objects.requireNonNullElse(input.active(),true));
+        return attributes(true).stream().filter(row->id.equals(row.get("id"))).findFirst().orElseThrow();
+    }
+    public Map<String,Object> createAttributeOption(UUID attributeId,Api.AttributeOption input) {
+        db.one("SELECT id FROM attribute_definitions WHERE id=?",attributeId);UUID id=UUID.randomUUID();
+        db.execute("INSERT INTO attribute_options(id,attribute_id,value,label,swatch,display_order,active) VALUES(?,?,?,?,?,?,?)",id,attributeId,input.value(),input.label(),input.swatch(),
+            Objects.requireNonNullElse(input.displayOrder(),0),Objects.requireNonNullElse(input.active(),true));
+        return db.one("SELECT * FROM attribute_options WHERE id=?",id);
     }
     public Map<String,Object> create(Api.CreateProduct input) {
         UUID id=UUID.randomUUID();
@@ -30,6 +66,9 @@ public class CatalogService {
     }
     private void saveDraft(UUID productId,Api.Draft draft) {
         db.one("SELECT id FROM categories WHERE id=?",draft.categoryId());
+        var collectionIds=draft.collectionIds()==null?List.<UUID>of():draft.collectionIds();
+        if(collectionIds.size()!=new HashSet<>(collectionIds).size()) throw new Problem(400,"DUPLICATE_COLLECTION","No repitas una colección.");
+        for(UUID collectionId:collectionIds) db.one("SELECT id FROM collections WHERE id=?",collectionId);
         var skus=new HashSet<String>();
         for(var variant:draft.variants()) {
             if(!skus.add(variant.sku())) throw Problem.conflict("DUPLICATE_SKU","Los SKU de las variantes deben ser distintos.");
@@ -69,7 +108,8 @@ public class CatalogService {
             product.put("published",content(id,db.one("SELECT content FROM product_revisions WHERE id=?",product.get("published_revision")).get("content"),false));
         return product;
     }
-    public Map<String,Object> list(boolean admin,int page,int size,String query,UUID category) {
+    public Map<String,Object> list(boolean admin,int page,int size,String query,UUID category) { return list(admin,page,size,query,category,null); }
+    public Map<String,Object> list(boolean admin,int page,int size,String query,UUID category,UUID collection) {
         validatePage(page,size);
         String where=admin?" WHERE true":" WHERE p.archived=false AND p.published_revision IS NOT NULL";
         var args=new ArrayList<Object>();
@@ -77,7 +117,8 @@ public class CatalogService {
             if(query.length()>100) throw new Problem(400,"INVALID_QUERY","La búsqueda admite hasta 100 caracteres.");
             where+=" AND (r.content->>'name' ILIKE ? OR p.slug ILIKE ?)";args.add("%"+query+"%");args.add("%"+query+"%");
         }
-        if(category!=null) { where+=" AND r.content->>'categoryId'=?";args.add(category.toString()); }
+        if(category!=null) { where+=" AND r.content->>'categoryId' IN (WITH RECURSIVE descendants AS (SELECT id FROM categories WHERE id=? UNION ALL SELECT c.id FROM categories c JOIN descendants d ON c.parent_id=d.id) SELECT id::text FROM descendants)";args.add(category); }
+        if(collection!=null) { where+=" AND COALESCE(r.content->'collectionIds','[]'::jsonb) @> ?::jsonb";args.add("[\""+collection+"\"]"); }
         String join=" FROM products p LEFT JOIN product_revisions r ON r.id=p.published_revision";
         long total=((Number)db.one("SELECT count(*) AS total"+join+where,args.toArray()).get("total")).longValue();
         args.add(size);args.add(page*size);
@@ -114,6 +155,7 @@ public class CatalogService {
         Api.Draft draft=json.read(raw,Api.Draft.class);
         var data=new LinkedHashMap<String,Object>();
         data.put("name",draft.name());data.put("description",draft.description());data.put("categoryId",draft.categoryId());data.put("imageUrl",draft.imageUrl());
+        data.put("collectionIds",draft.collectionIds()==null?List.of():draft.collectionIds());
         var variants=new ArrayList<Map<String,Object>>();
         for(var v:draft.variants()) {
             if(publicOnly&&!v.enabled()) continue;

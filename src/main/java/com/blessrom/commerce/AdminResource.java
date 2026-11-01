@@ -22,6 +22,12 @@ public class AdminResource {
     @Inject MediaService media;
     @Inject SecurityIdentity identity;
     @POST @Path("/categories") public Response category(@NotNull @Valid Api.Category input) { return Response.status(201).entity(catalog.createCategory(input)).build(); }
+    @GET @Path("/categories") public Object categories() { return catalog.adminCategories(); }
+    @GET @Path("/collections") public Object collections() { return catalog.collections(true); }
+    @POST @Path("/collections") public Response collection(@NotNull @Valid Api.Collection input) { return Response.status(201).entity(catalog.createCollection(input)).build(); }
+    @GET @Path("/attributes") public Object attributes() { return catalog.attributes(true); }
+    @POST @Path("/attributes") public Response attribute(@NotNull @Valid Api.AttributeDefinition input) { return Response.status(201).entity(catalog.createAttribute(input)).build(); }
+    @POST @Path("/attributes/{id}/options") public Response attributeOption(@PathParam("id") UUID id,@NotNull @Valid Api.AttributeOption input) { return Response.status(201).entity(catalog.createAttributeOption(id,input)).build(); }
     @GET @Path("/products") public Object products(@QueryParam("page") @DefaultValue("0") int page,@QueryParam("size") @DefaultValue("20") int size) { return catalog.list(true,page,size,null,null); }
     @POST @Path("/products") public Response create(@NotNull @Valid Api.CreateProduct input) { return Response.status(201).entity(catalog.create(input)).build(); }
     @GET @Path("/products/{id}") public Object get(@PathParam("id") UUID id) { return catalog.adminProduct(id); }
