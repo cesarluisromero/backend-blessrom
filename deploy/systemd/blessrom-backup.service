@@ -1,0 +1,13 @@
+[Unit]
+Description=Respaldo validado de PostgreSQL para Blessrom
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/blessrom/ops/backup.sh
+User=root
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+

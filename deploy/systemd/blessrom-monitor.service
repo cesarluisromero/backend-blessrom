@@ -1,0 +1,12 @@
+[Unit]
+Description=Comprueba la disponibilidad de Blessrom
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/blessrom/ops/monitor.sh
+User=root
+NoNewPrivileges=true
+PrivateTmp=true
+

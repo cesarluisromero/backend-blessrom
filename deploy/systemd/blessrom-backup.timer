@@ -1,0 +1,11 @@
+[Unit]
+Description=Respaldo diario de Blessrom
+
+[Timer]
+OnCalendar=*-*-* 03:15:00 America/Lima
+RandomizedDelaySec=10min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+
