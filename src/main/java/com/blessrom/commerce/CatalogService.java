@@ -50,6 +50,14 @@ public class CatalogService {
         }
         return Map.of("featuredCollections",featured);
     }
+    public Map<String,Object> collectionLanding(String slug,int page,int size) {
+        var collection=db.one("SELECT * FROM collections WHERE slug=? AND active=true AND (starts_at IS NULL OR starts_at<=now()) AND (ends_at IS NULL OR ends_at>now())",slug);
+        return Map.of("entity",collection,"products",list(false,page,size,null,null,Db.id(collection,"id")));
+    }
+    public Map<String,Object> categoryLanding(String slug,int page,int size) {
+        var category=db.one("SELECT * FROM categories WHERE slug=? AND active=true",slug);
+        return Map.of("entity",category,"products",list(false,page,size,null,Db.id(category,"id"),null));
+    }
     public List<Map<String,Object>> attributes(boolean admin) {
         String where=admin?"":" WHERE d.active=true";
         var definitions=db.rows("SELECT d.* FROM attribute_definitions d"+where+" ORDER BY d.display_order,d.name");

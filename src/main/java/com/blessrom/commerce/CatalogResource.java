@@ -11,6 +11,14 @@ public class CatalogResource {
     @GET @Path("/categories") public Object categories() { return catalog.categories(); }
     @GET @Path("/collections") public Object collections() { return catalog.collections(false); }
     @GET @Path("/storefront") public Object storefront() { return catalog.storefront(); }
+    @GET @Path("/collections/{slug}") public Object collection(@PathParam("slug") String slug,
+        @QueryParam("page") @DefaultValue("0") int page,@QueryParam("size") @DefaultValue("12") int size) {
+        return catalog.collectionLanding(slug,page,size);
+    }
+    @GET @Path("/categories/{slug}") public Object category(@PathParam("slug") String slug,
+        @QueryParam("page") @DefaultValue("0") int page,@QueryParam("size") @DefaultValue("12") int size) {
+        return catalog.categoryLanding(slug,page,size);
+    }
     @GET @Path("/attributes") public Object attributes() { return catalog.attributes(false); }
     @GET @Path("/products") public Object products(@QueryParam("page") @DefaultValue("0") int page,
         @QueryParam("size") @DefaultValue("20") int size,@QueryParam("q") String query,@QueryParam("category") UUID category,
