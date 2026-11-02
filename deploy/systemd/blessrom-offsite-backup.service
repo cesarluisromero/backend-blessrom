@@ -1,0 +1,16 @@
+[Unit]
+Description=Respaldo cifrado de Blessrom en almacenamiento externo
+After=docker.service network-online.target blessrom-backup.service
+Wants=network-online.target
+Requires=docker.service
+ConditionPathExists=/opt/blessrom/secrets/offsite-backup.env
+
+[Service]
+Type=oneshot
+ExecStart=/opt/blessrom/ops/offsite-backup.sh
+User=root
+Nice=15
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+TimeoutStartSec=2h
+

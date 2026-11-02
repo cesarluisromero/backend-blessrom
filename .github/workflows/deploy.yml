@@ -163,7 +163,7 @@ jobs:
       - name: Upload deployment files
         run: |
           ssh blessrom-vps "mkdir -p /opt/blessrom/releases/$GITHUB_SHA/systemd /opt/blessrom/registry-$GITHUB_RUN_ID"
-          scp deploy/compose.yaml deploy/deploy.sh deploy/monitor.sh deploy/backup.sh deploy/install-operations.sh \
+          scp deploy/compose.yaml deploy/deploy.sh deploy/monitor.sh deploy/backup.sh deploy/offsite-backup.sh deploy/install-operations.sh \
             "blessrom-vps:/opt/blessrom/releases/$GITHUB_SHA/"
           scp deploy/systemd/* "blessrom-vps:/opt/blessrom/releases/$GITHUB_SHA/systemd/"
       - name: Authorize temporary GHCR pull

@@ -1,0 +1,11 @@
+[Unit]
+Description=Respaldo externo diario de Blessrom
+
+[Timer]
+OnCalendar=*-*-* 04:00:00 America/Lima
+RandomizedDelaySec=10min
+Persistent=true
+Unit=blessrom-offsite-backup.service
+
+[Install]
+WantedBy=timers.target
