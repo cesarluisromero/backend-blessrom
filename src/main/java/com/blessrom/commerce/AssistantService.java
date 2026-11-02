@@ -56,11 +56,18 @@ public class AssistantService {
         }
         var rows=db.rows("""
             SELECT p.id,p.slug,pr.content->>'name' AS name,pr.content->>'description' AS description,
+                   c.name AS category,collection_names.names AS collections,
                    pr.content->>'imageUrl' AS image_url,v.sku,item->>'price' AS price,
                    item->'attributes' AS attributes,GREATEST(i.on_hand-i.reserved,0) AS available
             FROM products p JOIN product_revisions pr ON pr.id=p.published_revision
             JOIN variants v ON v.product_id=p.id JOIN inventory i ON i.variant_id=v.id
             JOIN LATERAL jsonb_array_elements(pr.content->'variants') item ON item->>'sku'=v.sku
+            LEFT JOIN categories c ON c.id=(pr.content->>'categoryId')::uuid
+            LEFT JOIN LATERAL (
+                SELECT string_agg(name,' ' ORDER BY display_order,name) AS names
+                FROM collections
+                WHERE id::text IN (SELECT jsonb_array_elements_text(COALESCE(pr.content->'collectionIds','[]'::jsonb)))
+            ) collection_names ON true
             WHERE p.archived=false AND COALESCE((item->>'enabled')::boolean,true)=true
             """+filter+"""
             ORDER BY pr.created_at DESC,p.slug,v.sku LIMIT 80
@@ -106,7 +113,7 @@ public class AssistantService {
         var grouped=new LinkedHashMap<String,Map<String,Object>>();
         for(var row:products) {
             int available=((Number)row.get("available")).intValue(); if(available<=0) continue;
-            String haystack=normalize(row.get("name")+" "+row.get("description")+" "+row.get("attributes")+" "+row.get("sku"));
+            String haystack=normalize(row.get("name")+" "+row.get("description")+" "+row.get("category")+" "+row.get("collections")+" "+row.get("attributes")+" "+row.get("sku"));
             long score=tokens.stream().filter(haystack::contains).count();
             String id=row.get("id").toString();
             var card=grouped.get(id);
