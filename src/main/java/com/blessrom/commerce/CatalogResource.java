@@ -22,8 +22,10 @@ public class CatalogResource {
     @GET @Path("/attributes") public Object attributes() { return catalog.attributes(false); }
     @GET @Path("/products") public Object products(@QueryParam("page") @DefaultValue("0") int page,
         @QueryParam("size") @DefaultValue("20") int size,@QueryParam("q") String query,@QueryParam("category") UUID category,
-        @QueryParam("collection") UUID collection) {
-        return catalog.list(false,page,size,query,category,collection);
+        @QueryParam("collection") UUID collection,@QueryParam("color") String color,@QueryParam("talla") String talla,
+        @QueryParam("minPrice") java.math.BigDecimal minPrice,@QueryParam("maxPrice") java.math.BigDecimal maxPrice,
+        @QueryParam("available") @DefaultValue("false") boolean available,@QueryParam("sort") @DefaultValue("name") String sort) {
+        return catalog.list(false,page,size,query,category,collection,color,talla,minPrice,maxPrice,available,sort);
     }
     @GET @Path("/products/{id}") public Object product(@PathParam("id") UUID id) { return catalog.publicProduct(id); }
     @GET @Path("/shipping-rates") public Object rates() { return shipping.list(false); }

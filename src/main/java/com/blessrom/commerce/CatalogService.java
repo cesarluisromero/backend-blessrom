@@ -137,7 +137,13 @@ public class CatalogService {
     }
     public Map<String,Object> list(boolean admin,int page,int size,String query,UUID category) { return list(admin,page,size,query,category,null); }
     public Map<String,Object> list(boolean admin,int page,int size,String query,UUID category,UUID collection) {
+        return list(admin,page,size,query,category,collection,null,null,null,null,false,"name");
+    }
+    public Map<String,Object> list(boolean admin,int page,int size,String query,UUID category,UUID collection,
+        String color,String sizeValue,java.math.BigDecimal minPrice,java.math.BigDecimal maxPrice,boolean available,String sort) {
         validatePage(page,size);
+        if(minPrice!=null&&minPrice.signum()<0||maxPrice!=null&&maxPrice.signum()<0||minPrice!=null&&maxPrice!=null&&minPrice.compareTo(maxPrice)>0)
+            throw new Problem(400,"INVALID_PRICE_RANGE","El rango de precios no es válido.");
         String where=admin?" WHERE true":" WHERE p.archived=false AND p.published_revision IS NOT NULL";
         var args=new ArrayList<Object>();
         if(query!=null&&!query.isBlank()) {
@@ -146,10 +152,21 @@ public class CatalogService {
         }
         if(category!=null) { where+=" AND r.content->>'categoryId' IN (WITH RECURSIVE descendants AS (SELECT id FROM categories WHERE id=? UNION ALL SELECT c.id FROM categories c JOIN descendants d ON c.parent_id=d.id) SELECT id::text FROM descendants)";args.add(category); }
         if(collection!=null) { where+=" AND COALESCE(r.content->'collectionIds','[]'::jsonb) @> ?::jsonb";args.add("[\""+collection+"\"]"); }
+        if(color!=null&&!color.isBlank()) { where+=" AND EXISTS (SELECT 1 FROM jsonb_array_elements(r.content->'variants') v WHERE v->>'enabled'='true' AND lower(v->'attributes'->>'color')=lower(?))";args.add(color); }
+        if(sizeValue!=null&&!sizeValue.isBlank()) { where+=" AND EXISTS (SELECT 1 FROM jsonb_array_elements(r.content->'variants') v WHERE v->>'enabled'='true' AND lower(v->'attributes'->>'talla')=lower(?))";args.add(sizeValue); }
+        if(minPrice!=null) { where+=" AND EXISTS (SELECT 1 FROM jsonb_array_elements(r.content->'variants') v WHERE v->>'enabled'='true' AND (v->>'price')::numeric>=?)";args.add(minPrice); }
+        if(maxPrice!=null) { where+=" AND EXISTS (SELECT 1 FROM jsonb_array_elements(r.content->'variants') v WHERE v->>'enabled'='true' AND (v->>'price')::numeric<=?)";args.add(maxPrice); }
+        if(available) where+=" AND EXISTS (SELECT 1 FROM variants v JOIN inventory i ON i.variant_id=v.id WHERE v.product_id=p.id AND i.on_hand-i.reserved>0)";
         String join=" FROM products p LEFT JOIN product_revisions r ON r.id=p.published_revision";
         long total=((Number)db.one("SELECT count(*) AS total"+join+where,args.toArray()).get("total")).longValue();
         args.add(size);args.add(page*size);
-        var rows=db.rows("SELECT p.*"+join+where+" ORDER BY p.slug LIMIT ? OFFSET ?",args.toArray());
+        String order=switch(Objects.requireNonNullElse(sort,"name")) {
+            case "price-asc" -> "(SELECT min((v->>'price')::numeric) FROM jsonb_array_elements(r.content->'variants') v WHERE v->>'enabled'='true') ASC,p.slug";
+            case "price-desc" -> "(SELECT min((v->>'price')::numeric) FROM jsonb_array_elements(r.content->'variants') v WHERE v->>'enabled'='true') DESC,p.slug";
+            case "newest" -> "p.created_at DESC";
+            default -> "lower(r.content->>'name'),p.slug";
+        };
+        var rows=db.rows("SELECT p.*"+join+where+" ORDER BY "+order+" LIMIT ? OFFSET ?",args.toArray());
         var items=rows.stream().map(p->admin?adminProduct(Db.id(p,"id")):publicProduct(Db.id(p,"id"))).toList();
         return Map.of("items",items,"page",page,"size",size,"total",total);
     }
