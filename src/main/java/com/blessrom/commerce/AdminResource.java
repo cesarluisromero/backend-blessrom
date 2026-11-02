@@ -25,6 +25,7 @@ public class AdminResource {
     @GET @Path("/categories") public Object categories() { return catalog.adminCategories(); }
     @GET @Path("/collections") public Object collections() { return catalog.collections(true); }
     @POST @Path("/collections") public Response collection(@NotNull @Valid Api.Collection input) { return Response.status(201).entity(catalog.createCollection(input)).build(); }
+    @PUT @Path("/collections/{id}") public Object collection(@PathParam("id") UUID id,@NotNull @Valid Api.UpdateCollection input) { return catalog.updateCollection(id,input); }
     @GET @Path("/attributes") public Object attributes() { return catalog.attributes(true); }
     @POST @Path("/attributes") public Response attribute(@NotNull @Valid Api.AttributeDefinition input) { return Response.status(201).entity(catalog.createAttribute(input)).build(); }
     @POST @Path("/attributes/{id}/options") public Response attributeOption(@PathParam("id") UUID id,@NotNull @Valid Api.AttributeOption input) { return Response.status(201).entity(catalog.createAttributeOption(id,input)).build(); }

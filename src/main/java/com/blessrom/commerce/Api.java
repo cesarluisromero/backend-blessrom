@@ -16,7 +16,9 @@ public final class Api {
     }
     public record Collection(@NotBlank @Size(max=120) String name,
         @NotBlank @Size(max=120) @Pattern(regexp="[a-z0-9]+(?:-[a-z0-9]+)*") String slug,
-        @Size(max=500) String description,Instant startsAt,Instant endsAt,@Min(0) Integer displayOrder,Boolean active) {}
+        @Size(max=500) String description,Instant startsAt,Instant endsAt,@Min(0) Integer displayOrder,Boolean active,
+        Boolean featured,@Size(max=2000) @Pattern(regexp="https://[^\\s]+") String coverImageUrl) {}
+    public record UpdateCollection(@Min(0) long version,@NotNull @Valid Collection collection) {}
     public record AttributeDefinition(@NotBlank @Size(max=40) @Pattern(regexp="[a-z0-9]+(?:-[a-z0-9]+)*") String code,
         @NotBlank @Size(max=80) String name,@NotBlank @Pattern(regexp="TEXT|SIZE|COLOR") String type,
         Boolean filterable,@Min(0) Integer displayOrder,Boolean active) {}

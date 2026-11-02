@@ -10,6 +10,7 @@ public class CatalogResource {
     @Inject ShippingService shipping;
     @GET @Path("/categories") public Object categories() { return catalog.categories(); }
     @GET @Path("/collections") public Object collections() { return catalog.collections(false); }
+    @GET @Path("/storefront") public Object storefront() { return catalog.storefront(); }
     @GET @Path("/attributes") public Object attributes() { return catalog.attributes(false); }
     @GET @Path("/products") public Object products(@QueryParam("page") @DefaultValue("0") int page,
         @QueryParam("size") @DefaultValue("20") int size,@QueryParam("q") String query,@QueryParam("category") UUID category,

@@ -27,9 +27,28 @@ public class CatalogService {
         if(input.startsAt()!=null&&input.endsAt()!=null&&!input.endsAt().isAfter(input.startsAt()))
             throw new Problem(400,"INVALID_COLLECTION_DATES","La fecha final debe ser posterior a la fecha inicial.");
         UUID id=UUID.randomUUID();
-        db.execute("INSERT INTO collections(id,name,slug,description,starts_at,ends_at,display_order,active) VALUES(?,?,?,?,?,?,?,?)",id,input.name(),input.slug(),
-            Objects.requireNonNullElse(input.description(),""),input.startsAt(),input.endsAt(),Objects.requireNonNullElse(input.displayOrder(),0),Objects.requireNonNullElse(input.active(),true));
+        db.execute("INSERT INTO collections(id,name,slug,description,starts_at,ends_at,display_order,active,featured,cover_image_url) VALUES(?,?,?,?,?,?,?,?,?,?)",id,input.name(),input.slug(),
+            Objects.requireNonNullElse(input.description(),""),input.startsAt(),input.endsAt(),Objects.requireNonNullElse(input.displayOrder(),0),Objects.requireNonNullElse(input.active(),true),
+            Objects.requireNonNullElse(input.featured(),false),input.coverImageUrl());
         return db.one("SELECT * FROM collections WHERE id=?",id);
+    }
+    public Map<String,Object> updateCollection(UUID id,Api.UpdateCollection input) {
+        var current=db.one("SELECT * FROM collections WHERE id=? FOR UPDATE",id);Problem.version(Db.version(current),input.version());
+        var value=input.collection();
+        if(value.startsAt()!=null&&value.endsAt()!=null&&!value.endsAt().isAfter(value.startsAt()))
+            throw new Problem(400,"INVALID_COLLECTION_DATES","La fecha final debe ser posterior a la fecha inicial.");
+        db.execute("UPDATE collections SET name=?,slug=?,description=?,starts_at=?,ends_at=?,display_order=?,active=?,featured=?,cover_image_url=?,version=version+1 WHERE id=?",
+            value.name(),value.slug(),Objects.requireNonNullElse(value.description(),""),value.startsAt(),value.endsAt(),Objects.requireNonNullElse(value.displayOrder(),0),
+            Objects.requireNonNullElse(value.active(),true),Objects.requireNonNullElse(value.featured(),false),value.coverImageUrl(),id);
+        return db.one("SELECT * FROM collections WHERE id=?",id);
+    }
+    public Map<String,Object> storefront() {
+        var featured=db.rows("SELECT * FROM collections WHERE active=true AND featured=true AND (starts_at IS NULL OR starts_at<=now()) AND (ends_at IS NULL OR ends_at>now()) ORDER BY display_order,name LIMIT 6");
+        for(var collection:featured) {
+            UUID id=Db.id(collection,"id");
+            collection.put("products",list(false,0,4,null,null,id).get("items"));
+        }
+        return Map.of("featuredCollections",featured);
     }
     public List<Map<String,Object>> attributes(boolean admin) {
         String where=admin?"":" WHERE d.active=true";
