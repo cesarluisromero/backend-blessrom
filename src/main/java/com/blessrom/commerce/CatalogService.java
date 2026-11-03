@@ -171,7 +171,7 @@ public class CatalogService {
         String order=switch(Objects.requireNonNullElse(sort,"name")) {
             case "price-asc" -> "(SELECT min((v->>'price')::numeric) FROM jsonb_array_elements(r.content->'variants') v WHERE v->>'enabled'='true') ASC,p.slug";
             case "price-desc" -> "(SELECT min((v->>'price')::numeric) FROM jsonb_array_elements(r.content->'variants') v WHERE v->>'enabled'='true') DESC,p.slug";
-            case "newest" -> "p.created_at DESC,p.id";
+            case "newest" -> "r.created_at DESC,p.id";
             default -> "lower(r.content->>'name'),p.slug";
         };
         var rows=db.rows("SELECT p.*"+join+filter.sql()+" ORDER BY "+order+" LIMIT ? OFFSET ?",args.toArray());
