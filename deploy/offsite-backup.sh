@@ -40,6 +40,7 @@ restic forget \
 	--host "$(hostname -s)" \
 	--tag blessrom \
 	--tag postgresql \
+	--group-by host,tags \
 	--keep-daily 14 \
 	--keep-weekly 8 \
 	--keep-monthly 12

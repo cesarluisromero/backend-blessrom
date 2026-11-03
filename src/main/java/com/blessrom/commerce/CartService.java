@@ -25,7 +25,11 @@ public class CartService {
     }
     public Map<String,Object> get(UUID id,String token) {
         var cart=authorize(id,token,false);
-        return Map.of("id",id,"status",cart.get("status"),"expiresAt",cart.get("expires_at"),"items",lines(id,false));
+        var result=new LinkedHashMap<String,Object>();
+        result.put("id",id);result.put("status",cart.get("status"));result.put("expiresAt",cart.get("expires_at"));result.put("items",lines(id,false));
+        var order=db.rows("SELECT id FROM orders WHERE cart_id=?",id);
+        result.put("orderId",order.isEmpty()?null:order.getFirst().get("id"));
+        return result;
     }
     public Map<String,Object> set(UUID id,String token,UUID variant,int quantity) {
         var cart=authorize(id,token,true);active(cart);

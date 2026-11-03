@@ -25,9 +25,11 @@ fi
 
 mkdir -p "$STATE_DIR"
 issues=()
+issue_codes=()
 
 add_issue() {
-	issues+=("$1")
+	issue_codes+=("$1")
+	issues+=("$2")
 }
 
 check_url() {
@@ -35,7 +37,7 @@ check_url() {
 	local url=$2
 	local timeout=$3
 	if ! curl --fail --silent --show-error --max-time "$timeout" "$url" >/dev/null 2>&1; then
-		add_issue "$label no responde: $url"
+		add_issue "url:$label" "$label no responde: $url"
 	fi
 }
 
@@ -43,22 +45,22 @@ check_url "Health local" "$HEALTH_URL" 10
 check_url "API publica" "$PUBLIC_URL" 15
 
 if ! docker inspect --format '{{.State.Running}}' "$BACKEND_CONTAINER" 2>/dev/null | grep -qx true; then
-	add_issue "El contenedor $BACKEND_CONTAINER no esta en ejecucion"
+	add_issue backend-container "El contenedor $BACKEND_CONTAINER no esta en ejecucion"
 fi
 
 if ! docker exec "$POSTGRES_CONTAINER" pg_isready \
 	-U "$POSTGRES_USER" -d "$POSTGRES_DATABASE" >/dev/null 2>&1; then
-	add_issue "PostgreSQL no esta disponible en $POSTGRES_CONTAINER/$POSTGRES_DATABASE"
+	add_issue postgres "PostgreSQL no esta disponible en $POSTGRES_CONTAINER/$POSTGRES_DATABASE"
 fi
 
 disk_percent=$(df -P / | awk 'NR==2 {gsub(/%/, "", $5); print $5}')
 if [[ "$disk_percent" =~ ^[0-9]+$ ]] && (( disk_percent >= DISK_WARNING_PERCENT )); then
-	add_issue "Disco raiz al ${disk_percent}% (umbral ${DISK_WARNING_PERCENT}%)"
+	add_issue disk "Disco raiz al ${disk_percent}% (umbral ${DISK_WARNING_PERCENT}%)"
 fi
 
 memory_percent=$(free | awk '/^Mem:/ {printf "%d", ($2-$7)*100/$2}')
 if [[ "$memory_percent" =~ ^[0-9]+$ ]] && (( memory_percent >= MEMORY_WARNING_PERCENT )); then
-	add_issue "Memoria al ${memory_percent}% (umbral ${MEMORY_WARNING_PERCENT}%)"
+	add_issue memory "Memoria al ${memory_percent}% (umbral ${MEMORY_WARNING_PERCENT}%)"
 fi
 
 cpu_count=$(nproc 2>/dev/null || printf '1')
@@ -66,19 +68,19 @@ load_one=$(awk '{print $1}' /proc/loadavg)
 load_scaled=$(awk -v load="$load_one" -v cpus="$cpu_count" 'BEGIN {printf "%d", load*100/cpus}')
 load_limit=$((LOAD_WARNING_PER_CPU * 100))
 if (( load_scaled >= load_limit )); then
-	add_issue "Carga ${load_one} con ${cpu_count} CPU (umbral ${LOAD_WARNING_PER_CPU} por CPU)"
+	add_issue cpu-load "Carga ${load_one} con ${cpu_count} CPU (umbral ${LOAD_WARNING_PER_CPU} por CPU)"
 fi
 
 latest_backup=$(find "$ROOT/backups" -maxdepth 2 -type f \
 	\( -name '*.dump' -o -name '*.sql.gz' -o -name '*.tar.gz' \) \
 	-printf '%T@ %p\n' 2>/dev/null | sort -nr | awk 'NR==1 {$1=""; sub(/^ /, ""); print}')
 if [[ -z "$latest_backup" ]]; then
-	add_issue "No se encontro un respaldo local en $ROOT/backups"
+	add_issue backup-missing "No se encontro un respaldo local en $ROOT/backups"
 else
 	backup_epoch=$(stat -c %Y "$latest_backup" 2>/dev/null || printf '0')
 	backup_age_minutes=$(( ($(date +%s) - backup_epoch) / 60 ))
 	if (( backup_age_minutes > BACKUP_MAX_AGE_MINUTES )); then
-		add_issue "El ultimo respaldo local tiene ${backup_age_minutes} minutos (maximo ${BACKUP_MAX_AGE_MINUTES})"
+		add_issue backup-old "El ultimo respaldo local tiene ${backup_age_minutes} minutos (maximo ${BACKUP_MAX_AGE_MINUTES})"
 	fi
 fi
 
@@ -87,7 +89,7 @@ check_service_result() {
 	local result
 	result=$(systemctl show "$unit" --property=Result --value 2>/dev/null || true)
 	if [[ -n "$result" && "$result" != success ]]; then
-		add_issue "La ultima ejecucion de $unit termino con resultado: $result"
+		add_issue "service:$unit" "La ultima ejecucion de $unit termino con resultado: $result"
 	fi
 }
 
@@ -101,13 +103,13 @@ for domain in $CERTIFICATE_DOMAINS; do
 	expires=$(timeout 15 openssl s_client -servername "$domain" -connect "$domain:443" </dev/null 2>/dev/null \
 		| openssl x509 -noout -enddate 2>/dev/null | cut -d= -f2-)
 	if [[ -z "$expires" ]]; then
-		add_issue "No se pudo verificar el certificado TLS de $domain"
+		add_issue "tls-unavailable:$domain" "No se pudo verificar el certificado TLS de $domain"
 		continue
 	fi
 	expires_epoch=$(date -d "$expires" +%s 2>/dev/null || printf '0')
 	remaining_days=$(( (expires_epoch - now_epoch) / 86400 ))
 	if (( remaining_days <= CERTIFICATE_WARNING_DAYS )); then
-		add_issue "El certificado TLS de $domain vence en ${remaining_days} dias"
+		add_issue "tls-expiring:$domain" "El certificado TLS de $domain vence en ${remaining_days} dias"
 	fi
 done
 
@@ -151,7 +153,7 @@ notify() {
 previous=$(cat "$STATE_FILE" 2>/dev/null || printf 'UNKNOWN')
 if ((${#issues[@]} > 0)); then
 	issue_list=$(printf -- '- %s\n' "${issues[@]}")
-	fingerprint=$(printf '%s' "$issue_list" | sha256sum | awk '{print $1}')
+	fingerprint=$(printf '%s\n' "${issue_codes[@]}" | sort | sha256sum | awk '{print $1}')
 	if [[ "$previous" != "ALERT:$fingerprint" ]]; then
 		notify "ALERTA Blessrom" "$(printf 'Blessrom presenta %d alerta(s) en %s:\n%s' "${#issues[@]}" "$(hostname)" "$issue_list")"
 	fi

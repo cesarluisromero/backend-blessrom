@@ -11,6 +11,7 @@ public class PaymentService {
     @Inject Db db;
     @Inject OrderService orders;
     @Inject NotificationService notifications;
+    @Inject ActivityService activity;
 
     public record Proof(String contentType,byte[] data) {}
 
@@ -29,6 +30,7 @@ public class PaymentService {
             if("SUBMITTED".equals(payment.get("status"))) return;
             if(!"REJECTED".equals(payment.get("status")))
                 throw Problem.conflict("PAYMENT_ALREADY_SUBMITTED","El comprobante ya está pendiente de revisión.");
+            db.execute("INSERT INTO order_payment_attempts(id,order_id,version,method,status,reference,proof_content_type,proof_data,provider_reference,provider_status,submitted_at,reviewed_at,reviewed_by,review_note) SELECT ?,order_id,version,method,status,reference,proof_content_type,proof_data,provider_reference,provider_status,submitted_at,reviewed_at,reviewed_by,review_note FROM order_payments WHERE order_id=?",UUID.randomUUID(),orderId);
             db.execute("UPDATE order_payments SET version=version+1,status='SUBMITTED',method=?,reference=?,proof_content_type=?,proof_data=?,submitted_at=now(),reviewed_at=NULL,reviewed_by=NULL,review_note=NULL WHERE order_id=?",
                 input.method(),clean(input.reference()),input.proofContentType(),input.proof(),orderId);
         }
@@ -46,6 +48,7 @@ public class PaymentService {
         if("APPROVED".equals(input.decision()))
             orders.transition(orderId,new Api.OrderStatus(input.orderVersion(),"PAYMENT_CONFIRMED"),actor);
         else notifications.enqueue(orderId,"PAYMENT_REJECTED",clean(input.note()));
+        activity.record("ORDER_PAYMENT_REVIEWED","order",orderId,"Pago "+("APPROVED".equals(input.decision())?"aprobado":"observado"),actor);
     }
 
     public Proof proof(UUID orderId) {

@@ -19,6 +19,7 @@ import java.util.*;
 public class MercadoPagoService {
     private static final Logger LOG=Logger.getLogger(MercadoPagoService.class);
     @Inject Db db; @Inject Json json; @Inject OrderService orders;
+    @Inject ActivityService activity;
     private volatile HttpClient client;
     @ConfigProperty(name="blessrom.payments.mercado-pago.enabled") boolean enabled;
     @ConfigProperty(name="blessrom.payments.mercado-pago.access-token") Optional<String> accessToken;
@@ -37,7 +38,8 @@ public class MercadoPagoService {
             var payment=existing.getFirst();
             if("MERCADO_PAGO".equals(payment.get("method"))&&payment.get("checkout_url")!=null&&"PENDING_PROVIDER".equals(payment.get("status")))
                 return Map.of("orderId",payment.get("provider_reference"),"checkoutUrl",payment.get("checkout_url"));
-            throw Problem.conflict("PAYMENT_ALREADY_SELECTED","El pedido ya tiene un medio de pago registrado.");
+            if(!"REJECTED".equals(payment.get("status"))||"MERCADO_PAGO".equals(payment.get("method")))
+                throw Problem.conflict("PAYMENT_ALREADY_SELECTED","El pedido ya tiene un medio de pago registrado.");
         }
         var customer=json.read(order.get("customer"),Map.class);
         String returnUrl=storeUrl.replaceAll("/$","")+"/pedido/"+orderId;
@@ -53,7 +55,10 @@ public class MercadoPagoService {
         try { providerOrder=postOrder(orderId.toString(),body); }
         catch(Exception e) { LOG.warnf("Mercado Pago rechazó la creación de la order: %s",safeMessage(e));throw new Problem(502,"PAYMENT_PROVIDER_UNAVAILABLE","Mercado Pago no está disponible temporalmente. Intenta nuevamente."); }
         String providerOrderId=required(providerOrder,"id"),checkoutUrl=required(providerOrder,"checkout_url");
-        db.execute("INSERT INTO order_payments(order_id,status,method,provider_reference,checkout_url,provider_status) VALUES(?,'PENDING_PROVIDER','MERCADO_PAGO',?,?,'created')",orderId,providerOrderId,checkoutUrl);
+        if(!existing.isEmpty()) {
+            db.execute("INSERT INTO order_payment_attempts(id,order_id,version,method,status,reference,proof_content_type,proof_data,provider_reference,provider_status,submitted_at,reviewed_at,reviewed_by,review_note) SELECT ?,order_id,version,method,status,reference,proof_content_type,proof_data,provider_reference,provider_status,submitted_at,reviewed_at,reviewed_by,review_note FROM order_payments WHERE order_id=?",UUID.randomUUID(),orderId);
+            db.execute("UPDATE order_payments SET version=version+1,status='PENDING_PROVIDER',method='MERCADO_PAGO',reference=NULL,proof_content_type=NULL,proof_data=NULL,provider_reference=?,checkout_url=?,external_payment_id=NULL,provider_status='created',submitted_at=now(),reviewed_at=NULL,reviewed_by=NULL,review_note=NULL WHERE order_id=?",providerOrderId,checkoutUrl,orderId);
+        } else db.execute("INSERT INTO order_payments(order_id,status,method,provider_reference,checkout_url,provider_status) VALUES(?,'PENDING_PROVIDER','MERCADO_PAGO',?,?,'created')",orderId,providerOrderId,checkoutUrl);
         return Map.of("orderId",providerOrderId,"checkoutUrl",checkoutUrl);
     }
 
@@ -78,6 +83,7 @@ public class MercadoPagoService {
             throw Problem.conflict("PAYMENT_AMOUNT_MISMATCH","El importe confirmado no coincide con el pedido.");
         db.execute("UPDATE order_payments SET version=version+1,status='APPROVED',reviewed_at=now(),reviewed_by='mercado-pago',review_note='Confirmado automáticamente por Mercado Pago' WHERE order_id=?",orderId);
         if("PENDING_PAYMENT".equals(order.get("status"))) orders.transition(orderId,new Api.OrderStatus(Db.version(order),"PAYMENT_CONFIRMED"),"mercado-pago");
+        else activity.record("PAYMENT_EXCEPTION","order",orderId,"Pago aprobado después del cierre del pedido","mercado-pago");
     }
 
     void validateSignature(String signature,String requestId,String dataId) {

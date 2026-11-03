@@ -13,6 +13,17 @@ public class ReturnService {
     @Inject InventoryService inventory;
     @Inject NotificationService notifications;
     @Inject MercadoPagoRefundService mercadoPagoRefunds;
+    @Inject ActivityService activity;
+
+    public Map<String,Object> list(String statuses,int page,int size) {
+        CatalogService.validatePage(page,size);var args=new ArrayList<Object>();var where=new StringBuilder(" WHERE true");
+        QueryFilters.statuses(where,args,"r.status",statuses,Set.of("REQUESTED","APPROVED","RECEIVED","REFUNDED","EXCHANGED","REJECTED"));
+        String join=" FROM order_returns r JOIN orders o ON o.id=r.order_id";
+        long total=((Number)db.one("SELECT count(*) AS total"+join+where,args.toArray()).get("total")).longValue();
+        args.add(size);args.add(page*size);
+        var items=db.rows("SELECT r.id,r.order_id,o.order_number AS \"orderNumber\",r.version,r.status,r.requested_resolution,r.reason,r.admin_note,r.resolution_reference,r.restocked,r.refund_amount,r.created_at,r.updated_at,r.resolved_at"+join+where+" ORDER BY r.created_at DESC,r.id DESC LIMIT ? OFFSET ?",args.toArray());
+        return Map.of("items",items,"page",page,"size",size,"total",total);
+    }
 
     public UUID request(String subject,UUID orderId,Api.ReturnRequest input) {
         var order=db.one("SELECT id,status FROM orders WHERE id=? AND customer_subject=? FOR UPDATE",orderId,subject);
@@ -72,6 +83,7 @@ public class ReturnService {
         db.execute("UPDATE order_returns SET status=?,admin_note=?,resolution_reference=?,restocked=?,provider_refund_id=?,refund_amount=?,refund_status=?,refund_requested_at=CASE WHEN ? THEN now() ELSE refund_requested_at END,resolved_at=CASE WHEN ? IN ('REFUNDED','EXCHANGED','REJECTED') THEN now() ELSE resolved_at END,updated_at=now(),version=version+1 WHERE id=? AND version=?",
             to,input.note().trim(),reference,restock,providerRefund==null?null:providerRefund.id(),providerRefund==null?null:providerRefund.amount(),providerRefund==null?null:providerRefund.status(),providerRefund!=null,to,id,input.version());
         notifications.enqueue(orderId,"RETURN_"+to,input.note().trim()+(reference==null?"":" · Referencia: "+reference));
+        activity.record("RETURN_STATUS_CHANGED","order",orderId,"Devolución: "+to,actor);
         return orderId;
     }
 

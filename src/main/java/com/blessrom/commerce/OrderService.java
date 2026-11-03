@@ -17,6 +17,7 @@ public class OrderService {
     @Inject NotificationService notifications;
     @Inject ReturnService returns;
     @Inject PromotionService promotions;
+    @Inject ActivityService activity;
     @ConfigProperty(name="blessrom.reservation-minutes",defaultValue="30") int reservationMinutes;
     public record Result(Map<String,Object> order,boolean replayed) {}
     public Result checkout(UUID cartId,String token,String key,Api.Checkout input) { return checkout(cartId,token,key,input,null); }
@@ -94,6 +95,7 @@ public class OrderService {
             history(id,to,actor);
             notifications.enqueue(id,to,"SHIPPED".equals(to)?shipmentDetail(id):null);
         }
+        activity.record("ORDER_STATUS_CHANGED","order",id,"Estado de pedido: "+to,actor);
         return view(id);
     }
     public Map<String,Object> saveShipment(UUID id,Api.Shipment input,String actor) {
@@ -113,6 +115,7 @@ public class OrderService {
                 input.carrier().trim(),input.trackingNumber().trim(),input.estimatedDelivery(),blankToNull(input.notes()),actor,id,current);
             if(updated!=1) throw Problem.conflict("VERSION_CONFLICT","Los datos de envío cambiaron; vuelve a consultar el pedido.");
         }
+        activity.record("ORDER_SHIPMENT_SAVED","order",id,"Datos de envío actualizados",actor);
         return adminGet(id);
     }
     private static String blankToNull(String value) { return value==null||value.isBlank()?null:value.trim(); }
@@ -142,9 +145,26 @@ public class OrderService {
         }
     }
     public Map<String,Object> list(int page,int size) {
+        return list(null,null,null,null,null,null,false,page,size);
+    }
+    public Map<String,Object> list(String query,String status,String paymentStatus,String paymentMethod,LocalDate from,LocalDate to,boolean paymentException,int page,int size) {
         CatalogService.validatePage(page,size);
-        return Map.of("items",db.rows("SELECT o.id,o.version,o.status,o.currency,o.total,o.created_at,o.reservation_expires_at,p.status AS payment_status,p.method AS payment_method FROM orders o LEFT JOIN order_payments p ON p.order_id=o.id ORDER BY o.created_at DESC,o.id LIMIT ? OFFSET ?",size,page*size),
-            "page",page,"size",size,"total",db.one("SELECT count(*) AS n FROM orders").get("n"));
+        var sql=new StringBuilder(" FROM orders o LEFT JOIN order_payments p ON p.order_id=o.id WHERE true");
+        var args=new ArrayList<Object>();
+        if(query!=null&&!query.isBlank()) {
+            if(query.length()>120)throw new Problem(400,"INVALID_QUERY","La búsqueda es demasiado larga.");
+            sql.append(" AND (o.order_number ILIKE ? OR o.id::text ILIKE ?)");
+            args.add("%"+query.trim()+"%");args.add("%"+query.trim()+"%");
+        }
+        QueryFilters.statuses(sql,args,"o.status",status,Set.of("PENDING_PAYMENT","PAYMENT_CONFIRMED","PREPARING","READY_TO_SHIP","SHIPPED","DELIVERED","CANCELLED","EXPIRED"));
+        QueryFilters.statuses(sql,args,"p.status",paymentStatus,Set.of("PENDING_PROVIDER","SUBMITTED","APPROVED","REJECTED"));
+        QueryFilters.statuses(sql,args,"p.method",paymentMethod,Set.of("YAPE","PLIN","BANK_TRANSFER","MERCADO_PAGO","CASH_ON_DELIVERY"));
+        QueryFilters.dates(sql,args,"o.created_at",from,to);
+        if(paymentException)sql.append(" AND o.status IN ('EXPIRED','CANCELLED') AND p.status='APPROVED'");
+        var count=db.one("SELECT count(*) AS n"+sql,args.toArray());
+        var pageArgs=new ArrayList<>(args);pageArgs.add(size);pageArgs.add(page*size);
+        var items=db.rows("SELECT o.id,o.order_number AS \"orderNumber\",o.version,o.status,o.currency,o.total,o.created_at,o.reservation_expires_at,p.status AS payment_status,p.method AS payment_method"+sql+" ORDER BY o.created_at DESC,o.id DESC LIMIT ? OFFSET ?",pageArgs.toArray());
+        return Map.of("items",items,"page",page,"size",size,"total",count.get("n"));
     }
     public Map<String,Object> listByCustomer(String subject,int page,int size) {
         CatalogService.validatePage(page,size);
@@ -181,7 +201,7 @@ public class OrderService {
         db.execute("INSERT INTO order_history(id,order_id,status,actor) VALUES(?,?,?,?)",UUID.randomUUID(),id,status,actor);
     }
     private Map<String,Object> view(UUID id) {
-        var order=db.one("SELECT id,version,status,currency,subtotal,discount,shipping,total,coupon_code,customer,created_at,reservation_expires_at FROM orders WHERE id=?",id);
+        var order=db.one("SELECT id,order_number AS \"orderNumber\",version,status,currency,subtotal,discount,shipping,total,coupon_code,customer,created_at,reservation_expires_at FROM orders WHERE id=?",id);
         order.put("customer",json.read(order.get("customer"),Map.class));
         var items=db.rows("SELECT variant_id,sku,name,attributes,quantity,unit_price,line_total FROM order_items WHERE order_id=? ORDER BY variant_id",id);
         for(var item:items) item.put("attributes",json.read(item.get("attributes"),Map.class));
@@ -189,6 +209,7 @@ public class OrderService {
         order.put("history",db.rows("SELECT status,actor,created_at FROM order_history WHERE order_id=? ORDER BY created_at,id",id));
         var payments=db.rows("SELECT version,status,method,reference,(proof_data IS NOT NULL) AS has_proof,provider_reference,checkout_url,provider_status,submitted_at,reviewed_at,reviewed_by,review_note FROM order_payments WHERE order_id=?",id);
         order.put("payment",payments.isEmpty()?null:payments.getFirst());
+        order.put("paymentAttempts",db.rows("SELECT method,status,reference,(proof_data IS NOT NULL) AS has_proof,provider_reference,provider_status,submitted_at,reviewed_at,reviewed_by,review_note,archived_at FROM order_payment_attempts WHERE order_id=? ORDER BY archived_at DESC,id DESC",id));
         var shipments=db.rows("SELECT version,carrier,tracking_number,estimated_delivery,notes,shipped_at,delivered_at,updated_at FROM order_shipments WHERE order_id=?",id);
         order.put("shipment",shipments.isEmpty()?null:shipments.getFirst());
         order.put("returns",returns.listForOrder(id));

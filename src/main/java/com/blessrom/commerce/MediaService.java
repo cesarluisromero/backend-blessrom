@@ -34,6 +34,7 @@ public class MediaService {
     @ConfigProperty(name="blessrom.media.r2.secret-access-key") Optional<String> secretKey;
     @ConfigProperty(name="blessrom.media.public-base-url",defaultValue="https://media.blessrom.com") String publicBaseUrl;
     @ConfigProperty(name="blessrom.media.upload-expiry-seconds",defaultValue="600") int expirySeconds;
+    private volatile HttpClient client;
 
     public record StartUpload(@NotBlank @Size(max=255) String filename,@Size(max=300) String altText) {}
     public record UploadedObject(@NotBlank @Pattern(regexp="original|large|medium|thumbnail") String variant,
@@ -45,13 +46,23 @@ public class MediaService {
     public Map<String,Object> start(UUID productId,StartUpload input) {
         requireConfigured();
         db.one("SELECT id FROM products WHERE id=?",productId);
+        return startOwned(productId,null,input);
+    }
+
+    public Map<String,Object> startHome(StartUpload input) {
+        requireConfigured();
+        db.one("SELECT page_key FROM storefront_pages WHERE page_key='home'");
+        return startOwned(null,"home",input);
+    }
+
+    private Map<String,Object> startOwned(UUID productId,String pageKey,StartUpload input) {
         UUID assetId=UUID.randomUUID();
         String safeName=input.filename().replaceAll("[^A-Za-z0-9._-]","_");
-        db.execute("INSERT INTO media_assets(id,product_id,original_filename,alt_text) VALUES(?,?,?,?)",
-            assetId,productId,safeName,input.altText());
+        db.execute("INSERT INTO media_assets(id,product_id,page_key,original_filename,alt_text) VALUES(?,?,?,?,?)",
+            assetId,productId,pageKey,safeName,input.altText());
         var uploads=new ArrayList<Map<String,Object>>();
         for(String variant:VARIANTS) {
-            String key="products/"+productId+"/"+assetId+"/"+variant+".webp";
+            String key=(productId==null?"storefront/"+pageKey:"products/"+productId)+"/"+assetId+"/"+variant+".webp";
             db.execute("INSERT INTO media_objects(asset_id,variant,object_key) VALUES(?,?,?)",assetId,variant,key);
             uploads.add(Map.of("variant",variant,"objectKey",key,"uploadUrl",presign("PUT",key,true),"contentType","image/webp"));
         }
@@ -61,19 +72,47 @@ public class MediaService {
     public Map<String,Object> complete(UUID productId,UUID assetId,CompleteUpload input) {
         requireConfigured();
         var asset=db.one("SELECT * FROM media_assets WHERE id=? AND product_id=? FOR UPDATE",assetId,productId);
+        completeObjects(assetId,asset,input);
+        // Serialize selection of the first image with other completions for this product.
+        db.one("SELECT id FROM products WHERE id=? FOR UPDATE",productId);
+        db.execute("UPDATE media_assets SET status='READY',ready_at=now(),is_primary=NOT EXISTS(SELECT 1 FROM media_assets WHERE product_id=? AND status='READY' AND is_primary) WHERE id=?",productId,assetId);
+        return asset(productId,assetId);
+    }
+
+    public Map<String,Object> completeHome(UUID assetId,CompleteUpload input) {
+        requireConfigured();
+        var asset=db.one("SELECT * FROM media_assets WHERE id=? AND page_key='home' FOR UPDATE",assetId);
+        completeObjects(assetId,asset,input);
+        db.execute("UPDATE media_assets SET status='READY',ready_at=now(),is_primary=false WHERE id=?",assetId);
+        return homeAsset(assetId);
+    }
+
+    private void completeObjects(UUID assetId,Map<String,Object> asset,CompleteUpload input) {
         if(!"PENDING".equals(asset.get("status"))) throw Problem.conflict("MEDIA_ALREADY_COMPLETED","La carga ya fue finalizada.");
         var supplied=new HashMap<String,UploadedObject>();
-        for(var object:input.objects()) if(supplied.put(object.variant(),object)!=null)
+        if(input==null||input.objects()==null||input.objects().size()!=VARIANTS.size())
+            throw new Problem(400,"MISSING_MEDIA_VARIANT","Completa las cuatro variantes WebP.");
+        for(var object:input.objects()) {
+            if(object==null||object.width()<1||object.width()>10000||object.height()<1||object.height()>10000||object.byteSize()<1||object.byteSize()>10_485_760)
+                throw new Problem(400,"INVALID_MEDIA_OBJECT","Revisa el tamaño y las dimensiones de la imagen.");
+            if(supplied.put(object.variant(),object)!=null)
             throw new Problem(400,"DUPLICATE_MEDIA_VARIANT","Cada variante debe aparecer una sola vez.");
+        }
         if(!supplied.keySet().equals(new HashSet<>(VARIANTS)))
             throw new Problem(400,"MISSING_MEDIA_VARIANT","Completa las cuatro variantes WebP.");
+        var objects=db.rows("SELECT variant,object_key FROM media_objects WHERE asset_id=?",assetId);
+        if(objects.size()!=VARIANTS.size())throw Problem.conflict("MEDIA_UPLOAD_INCOMPLETE","La carga no contiene todos los archivos esperados.");
+        // The browser supplies dimensions, but never decides whether an object exists in R2.
+        // Verify every object before making any asset visible in the storefront.
+        for(var object:objects) {
+            String variant=String.valueOf(object.get("variant"));
+            validateObjectMetadata(supplied.get(variant),headObject(String.valueOf(object.get("object_key"))));
+        }
         for(String variant:VARIANTS) {
             var value=supplied.get(variant);
             db.execute("UPDATE media_objects SET width=?,height=?,byte_size=? WHERE asset_id=? AND variant=?",
                 value.width(),value.height(),value.byteSize(),assetId,variant);
         }
-        db.execute("UPDATE media_assets SET status='READY',ready_at=now(),is_primary=NOT EXISTS(SELECT 1 FROM media_assets WHERE product_id=? AND status='READY' AND is_primary) WHERE id=?",productId,assetId);
-        return asset(productId,assetId);
     }
 
     public Map<String,Object> update(UUID productId,UUID assetId,UpdateMedia input) {
@@ -121,6 +160,44 @@ public class MediaService {
         asset.put("urls",urls);asset.put("objects",objects);return asset;
     }
 
+    /** Only READY assets owned by the homepage can be referenced by a page draft or revision. */
+    public Map<String,Object> homeAsset(UUID assetId) {
+        var asset=db.one("SELECT id,alt_text,is_primary FROM media_assets WHERE id=? AND page_key='home' AND status='READY'",assetId);
+        var urls=new LinkedHashMap<String,String>();
+        for(var object:db.rows("SELECT variant,object_key FROM media_objects WHERE asset_id=? ORDER BY variant",assetId))
+            urls.put(String.valueOf(object.get("variant")),publicUrl(String.valueOf(object.get("object_key"))));
+        asset.put("urls",urls);return asset;
+    }
+
+    record ObjectMetadata(String contentType,long byteSize) {}
+
+    static void validateObjectMetadata(UploadedObject supplied,ObjectMetadata remote) {
+        if(supplied==null||remote==null||remote.contentType()==null
+            ||!"image/webp".equalsIgnoreCase(remote.contentType().split(";",2)[0].trim())
+            ||remote.byteSize()<1||remote.byteSize()>10_485_760||remote.byteSize()!=supplied.byteSize())
+            throw Problem.conflict("MEDIA_OBJECT_MISMATCH","El archivo subido no coincide con la imagen WebP esperada. Vuelve a cargarla.");
+    }
+
+    ObjectMetadata headObject(String key) {
+        try {
+            var request=HttpRequest.newBuilder(URI.create(presign("HEAD",key,false)))
+                .method("HEAD",HttpRequest.BodyPublishers.noBody()).timeout(Duration.ofSeconds(10)).build();
+            var response=client().send(request,HttpResponse.BodyHandlers.discarding());
+            if(response.statusCode()==404)throw Problem.conflict("MEDIA_UPLOAD_INCOMPLETE","Termina de subir las cuatro imágenes antes de confirmar.");
+            if(response.statusCode()<200||response.statusCode()>=300)
+                throw new Problem(502,"MEDIA_STORAGE_UNAVAILABLE","No se pudo verificar la carga en el almacenamiento. Inténtalo de nuevo.");
+            return new ObjectMetadata(response.headers().firstValue("Content-Type").orElse(null),response.headers().firstValueAsLong("Content-Length").orElse(-1));
+        } catch(Problem e){throw e;}
+        catch(InterruptedException e){Thread.currentThread().interrupt();throw new Problem(502,"MEDIA_STORAGE_UNAVAILABLE","Se interrumpió la verificación de la carga.");}
+        catch(Exception e){throw new Problem(502,"MEDIA_STORAGE_UNAVAILABLE","No se pudo verificar la carga en el almacenamiento. Inténtalo de nuevo.");}
+    }
+
+    private HttpClient client() {
+        var current=client;
+        if(current==null)synchronized(this){current=client;if(current==null)client=current=HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();}
+        return current;
+    }
+
     private void requireConfigured() {
         if(!enabled||accessKey.filter(value->!value.isBlank()).isEmpty()||secretKey.filter(value->!value.isBlank()).isEmpty())
             throw new Problem(503,"MEDIA_STORAGE_DISABLED","Cloudflare R2 todavía no está configurado.");
@@ -157,7 +234,7 @@ public class MediaService {
     private void deleteObject(String key) {
         try {
             var request=HttpRequest.newBuilder(URI.create(presign("DELETE",key,false))).DELETE().timeout(Duration.ofSeconds(15)).build();
-            int status=HttpClient.newHttpClient().send(request,HttpResponse.BodyHandlers.discarding()).statusCode();
+            int status=client().send(request,HttpResponse.BodyHandlers.discarding()).statusCode();
             if(status!=404&&(status<200||status>=300)) throw new IllegalStateException("R2 rechazó la eliminación con estado "+status);
         } catch(InterruptedException e) { Thread.currentThread().interrupt();throw new IllegalStateException("Se interrumpió la eliminación en R2",e); }
         catch(Exception e) { throw new IllegalStateException("No se pudo eliminar el objeto de R2",e); }

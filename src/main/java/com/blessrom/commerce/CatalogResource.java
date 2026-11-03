@@ -24,8 +24,9 @@ public class CatalogResource {
         @QueryParam("size") @DefaultValue("20") int size,@QueryParam("q") String query,@QueryParam("category") UUID category,
         @QueryParam("collection") UUID collection,@QueryParam("color") String color,@QueryParam("talla") String talla,
         @QueryParam("minPrice") java.math.BigDecimal minPrice,@QueryParam("maxPrice") java.math.BigDecimal maxPrice,
-        @QueryParam("available") @DefaultValue("false") boolean available,@QueryParam("sort") @DefaultValue("name") String sort) {
-        return catalog.list(false,page,size,query,category,collection,color,talla,minPrice,maxPrice,available,sort);
+        @QueryParam("available") @DefaultValue("false") boolean available,@QueryParam("sort") @DefaultValue("name") String sort,
+        @QueryParam("includeFacets") @DefaultValue("false") boolean includeFacets) {
+        return catalog.list(false,page,size,query,category,collection,color,talla,minPrice,maxPrice,available,sort,includeFacets);
     }
     @GET @Path("/products/{id}") public Object product(@PathParam("id") UUID id) { return catalog.publicProduct(id); }
     @GET @Path("/shipping-rates") public Object rates() { return shipping.list(false); }
