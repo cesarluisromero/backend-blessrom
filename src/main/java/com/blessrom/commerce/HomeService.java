@@ -22,6 +22,18 @@ public class HomeService {
     @RegisterForReflection
     public record Action(@NotBlank @Size(max=80) String label, @NotNull @Valid Target target) {}
     @RegisterForReflection
+    public record HomeSlide(
+        @NotNull @Size(max=100) String eyebrow,
+        @NotBlank @Size(max=180) String title,
+        @NotNull @Size(max=1000) String description,
+        UUID heroAssetId,
+        @NotNull @Size(max=300) String heroAlt,
+        @DecimalMin("0") @DecimalMax("100") double frameX,
+        @DecimalMin("0") @DecimalMax("100") double frameY,
+        @NotNull @Valid Action primary,
+        @Valid Action secondary,
+        Boolean enabled) {}
+    @RegisterForReflection
     public record HomeContent(
         @NotNull @Size(max=100) String eyebrow,
         @NotBlank @Size(max=180) String title,
@@ -32,7 +44,13 @@ public class HomeService {
         @DecimalMin("0") @DecimalMax("100") double frameY,
         @NotNull @Valid Action primary,
         @Valid Action secondary,
-        @NotNull @Size(max=6) List<@NotNull @Valid Action> shortcuts) {}
+        @NotNull @Size(max=6) List<@NotNull @Valid Action> shortcuts,
+        @Size(max=6) List<@NotNull @Valid HomeSlide> slides) {
+        /** Keeps already stored revisions and older clients readable during the additive rollout. */
+        public HomeContent(String eyebrow,String title,String description,UUID heroAssetId,String heroAlt,double frameX,double frameY,Action primary,Action secondary,List<Action> shortcuts) {
+            this(eyebrow,title,description,heroAssetId,heroAlt,frameX,frameY,primary,secondary,shortcuts,null);
+        }
+    }
     @RegisterForReflection
     public record SaveDraft(@Min(0) long version, @NotNull @Valid HomeContent content) {}
 
@@ -47,12 +65,13 @@ public class HomeService {
         result.put("publishedRevisionId",page.get("published_revision_id"));
         result.put("publishedAt",page.get("published_at"));
         result.put("draftMedia",hero(draft));result.put("publishedMedia",hero(published));
+        result.put("draftSlides",slidePayloads(draft,false));result.put("publishedSlides",slidePayloads(published,false));
         return result;
     }
 
     public Map<String,Object> saveDraft(SaveDraft input,String actor) {
         var page=lock();Problem.version(Db.version(page),input.version());
-        validate(input.content());
+        validate(input.content(),false);
         db.execute("UPDATE storefront_pages SET draft_content=?::jsonb,version=version+1,updated_at=now() WHERE page_key='home'",json.write(input.content()));
         activity.record("HOME_DRAFT_SAVED","home",null,"Borrador de portada guardado",actor);
         return admin();
@@ -62,7 +81,7 @@ public class HomeService {
         var page=lock();Problem.version(Db.version(page),expected);
         HomeContent content=read(page.get("draft_content"));
         if(content==null) throw Problem.conflict("HOME_DRAFT_REQUIRED","Guarda un borrador antes de publicar la portada.");
-        validate(content);
+        validate(content,true);
         UUID revision=UUID.randomUUID();
         db.execute("INSERT INTO storefront_revisions(id,page_key,content,created_by) VALUES(?,'home',?::jsonb,?)",revision,json.write(content),actor);
         db.execute("UPDATE storefront_pages SET published_revision_id=?,published_at=now(),draft_content=NULL,version=version+1,updated_at=now() WHERE page_key='home'",revision);
@@ -77,6 +96,7 @@ public class HomeService {
         var result=new LinkedHashMap<String,Object>();
         result.put("revisionId",row.get("id"));result.put("content",content);
         var hero=hero(content);if(hero!=null)result.put("heroMedia",hero);
+        result.put("slides",slidePayloads(content,true));
         return result;
     }
 
@@ -84,11 +104,41 @@ public class HomeService {
     private HomeContent read(Object value) {return value==null?null:json.read(value,HomeContent.class);}
     private Map<String,Object> hero(HomeContent content) {return content==null||content.heroAssetId()==null?null:media.homeAsset(content.heroAssetId());}
 
-    void validate(HomeContent content) {
+    private List<HomeSlide> slides(HomeContent content) {
+        if(content==null)return List.of();
+        if(content.slides()!=null&&!content.slides().isEmpty())return content.slides();
+        return List.of(new HomeSlide(content.eyebrow(),content.title(),content.description(),content.heroAssetId(),content.heroAlt(),content.frameX(),content.frameY(),content.primary(),content.secondary(),true));
+    }
+
+    private List<Map<String,Object>> slidePayloads(HomeContent content,boolean publicOnly) {
+        var result=new ArrayList<Map<String,Object>>();
+        for(var slide:slides(content)) {
+            boolean enabled=slide.enabled()==null||slide.enabled();
+            if(publicOnly&&(!enabled||slide.heroAssetId()==null))continue;
+            var item=new LinkedHashMap<String,Object>();item.put("content",slide);
+            if(slide.heroAssetId()!=null)item.put("heroMedia",media.homeAsset(slide.heroAssetId()));
+            result.add(item);
+        }
+        return result;
+    }
+
+    void validate(HomeContent content,boolean publishing) {
         validateStructure(content);
-        if(content.heroAssetId()!=null) media.homeAsset(content.heroAssetId());
+        if(content.heroAssetId()!=null)media.homeAsset(content.heroAssetId());
+        boolean managedSlider=content.slides()!=null;
+        int publishedSlides=0;
+        for(var slide:slides(content)) {
+            boolean enabled=slide.enabled()==null||slide.enabled();
+            if(slide.heroAssetId()!=null)media.homeAsset(slide.heroAssetId());
+            if(enabled&&slide.heroAssetId()!=null)publishedSlides++;
+            if(publishing&&managedSlider&&enabled&&slide.heroAssetId()==null)
+                throw new Problem(400,"HOME_SLIDE_IMAGE_REQUIRED","Cada diapositiva activa necesita una fotografía.");
+        }
+        if(publishing&&managedSlider&&publishedSlides==0)
+            throw new Problem(400,"HOME_SLIDES_REQUIRED","Agrega al menos una diapositiva activa con fotografía antes de publicar.");
         var actions=new ArrayList<Action>();actions.add(content.primary());
         if(content.secondary()!=null)actions.add(content.secondary());actions.addAll(content.shortcuts());
+        for(var slide:slides(content)){actions.add(slide.primary());if(slide.secondary()!=null)actions.add(slide.secondary());}
         for(var action:actions) {
             var target=action.target();
             if("category".equals(target.type())) {
@@ -99,6 +149,25 @@ public class HomeService {
                     throw new Problem(400,"HOME_TARGET_UNAVAILABLE","Elige una colección activa y vigente para el acceso.");
             }
         }
+        if(content.slides()!=null)for(var slide:content.slides())validateSlide(slide);
+    }
+
+    private static void validateSlide(HomeSlide slide) {
+        if(slide==null||slide.title()==null||slide.title().isBlank()||slide.title().length()>180||slide.eyebrow()==null||slide.eyebrow().length()>100
+            ||slide.description()==null||slide.description().length()>1000||slide.heroAlt()==null||slide.heroAlt().length()>300
+            ||!Double.isFinite(slide.frameX())||!Double.isFinite(slide.frameY())||slide.frameX()<0||slide.frameX()>100||slide.frameY()<0||slide.frameY()>100||slide.primary()==null)
+            throw new Problem(400,"INVALID_HOME_SLIDE","Revisa los textos, la imagen y el encuadre de cada diapositiva.");
+        if(slide.heroAssetId()!=null&&slide.heroAlt().isBlank())throw new Problem(400,"HOME_IMAGE_ALT_REQUIRED","Describe cada imagen de portada para lectores de pantalla.");
+        validateAction(slide.primary());if(slide.secondary()!=null)validateAction(slide.secondary());
+    }
+
+    private static void validateAction(Action action) {
+        if(action==null||action.label()==null||action.label().isBlank()||action.label().length()>80||action.target()==null)
+            throw new Problem(400,"INVALID_HOME_ACTION","Cada acceso necesita un texto y un destino.");
+        var target=action.target();
+        if(target.type()==null||!Set.of("catalog","category","collection","collections").contains(target.type())
+            ||(Set.of("category","collection").contains(target.type())!=(target.id()!=null)))
+            throw new Problem(400,"INVALID_HOME_TARGET","Elige un destino interno válido para el acceso.");
     }
 
     static void validateStructure(HomeContent content) {
@@ -112,12 +181,7 @@ public class HomeService {
         var actions=new ArrayList<Action>();actions.add(content.primary());
         if(content.secondary()!=null)actions.add(content.secondary());actions.addAll(content.shortcuts());
         for(var action:actions) {
-            if(action==null||action.label()==null||action.label().isBlank()||action.label().length()>80||action.target()==null)
-                throw new Problem(400,"INVALID_HOME_ACTION","Cada acceso necesita un texto y un destino.");
-            var target=action.target();
-            if(target.type()==null||!Set.of("catalog","category","collection","collections").contains(target.type())
-                ||(Set.of("category","collection").contains(target.type())!=(target.id()!=null)))
-                throw new Problem(400,"INVALID_HOME_TARGET","Elige un destino interno válido para el acceso.");
+            validateAction(action);
         }
     }
 }
