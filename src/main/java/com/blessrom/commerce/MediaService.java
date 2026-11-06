@@ -164,9 +164,10 @@ public class MediaService {
     public Map<String,Object> homeAsset(UUID assetId) {
         var asset=db.one("SELECT id,alt_text,is_primary FROM media_assets WHERE id=? AND page_key='home' AND status='READY'",assetId);
         var urls=new LinkedHashMap<String,String>();
-        for(var object:db.rows("SELECT variant,object_key FROM media_objects WHERE asset_id=? ORDER BY variant",assetId))
+        var objects=db.rows("SELECT variant,object_key,width,height,byte_size FROM media_objects WHERE asset_id=? ORDER BY variant",assetId);
+        for(var object:objects)
             urls.put(String.valueOf(object.get("variant")),publicUrl(String.valueOf(object.get("object_key"))));
-        asset.put("urls",urls);return asset;
+        asset.put("urls",urls);asset.put("objects",objects);return asset;
     }
 
     record ObjectMetadata(String contentType,long byteSize) {}
