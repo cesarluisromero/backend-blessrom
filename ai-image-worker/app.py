@@ -4,7 +4,7 @@ import requests
 from fastapi import FastAPI, Header, HTTPException, Request
 from PIL import Image, ImageOps
 from rembg import new_session, remove
-from openai import OpenAI
+from openai import OpenAI, BadRequestError
 
 app=FastAPI(docs_url=None,redoc_url=None)
 TOKEN=os.environ.get("AI_WORKER_TOKEN","")
@@ -41,15 +41,20 @@ def ghost_mannequin(sources,garment_kind,feedback=""):
     if not os.environ.get("OPENAI_API_KEY"): raise ValueError("OPENAI_API_KEY es obligatoria para generar el maniquí fantasma")
     detail={"TOP":"interior neckline and natural shoulder, sleeve and torso volume","BOTTOM":"interior waistband and natural hip and leg volume","DRESS":"interior neckline and natural shoulder, waist and skirt volume"}[garment_kind]
     roles=", ".join(source.get("role","REFERENCE") for source in sources)
-    prompt=("Create a professional ecommerce ghost-mannequin image of exactly the supplied garment. Input image order and roles: "+roles+". The first image is the approved transparent cutout; "
-      "the remaining images are references for front, back and interior details. Reconstruct only "+detail+". Preserve exact color, fabric, print, seams, labels, proportions and geometry. "
-      "No visible person, skin, body parts, mannequin, hanger, clips, supports, text, logo overlay, floor, background or baked shadow. One centered garment, front-facing, fully transparent background. "
-      "Do not invent details that are not supported by the references. Requested correction: "+(feedback or "none"))
+    prompt=("Create a professional isolated ecommerce product photograph of the supplied apparel. Input image order and roles: "+roles+". The first image is the approved transparent cutout; "
+      "the remaining images are references for front, back and interior construction. Present the garment as a hollow three-dimensional retail form with "+detail+". Preserve the supplied garment's color, fabric, artwork, seams, labels, proportions and geometry. "
+      "Use one centered front-facing garment on a fully transparent canvas. Do not add display equipment, scenery, floor, background, extra text or baked shadow. "
+      "Do not invent details unsupported by the references. Requested correction: "+(feedback or "none"))
     files=[]
     try:
         for index,source in enumerate(sources):
             image=download(source["imageUrl"]);path=Path(tempfile.gettempdir())/f"ghost-{os.getpid()}-{index}.png";image.save(path,"PNG");files.append(open(path,"rb"))
-        result=OpenAI().images.edit(model=IMAGE_MODEL,image=files,prompt=prompt,size="1600x2000",quality=GHOST_QUALITY,background="transparent",output_format="png")
+        try: result=OpenAI().images.edit(model=IMAGE_MODEL,image=files,prompt=prompt,size="1600x2000",quality=GHOST_QUALITY,background="transparent",output_format="png",moderation="low")
+        except BadRequestError as error:
+            if getattr(error,"code",None)!="moderation_blocked": raise
+            retry=("Produce a clean isolated apparel catalog image from these product references. Give the garment natural three-dimensional volume and a visible hollow interior opening. "
+              "Keep the supplied colors, construction and artwork unchanged. Center one front-facing garment on transparency; add no scenery, equipment, extra writing or shadow.")
+            result=OpenAI().images.edit(model=IMAGE_MODEL,image=files,prompt=retry,size="1600x2000",quality=GHOST_QUALITY,background="transparent",output_format="png",moderation="low")
         image=Image.open(io.BytesIO(base64.b64decode(result.data[0].b64_json))).convert("RGBA");alpha=image.getchannel("A")
         if not alpha.getbbox() or alpha.getextrema()[0]>=250: raise ValueError("el maniquí generado no contiene transparencia real")
         return image

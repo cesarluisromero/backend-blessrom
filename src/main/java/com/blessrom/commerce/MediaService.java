@@ -126,7 +126,7 @@ public class MediaService {
 
     public void promoteHome(UUID assetId) {db.execute("UPDATE media_assets SET status='READY' WHERE id=? AND page_key='home' AND status='STAGED'",assetId);}
     public void resetStaged(UUID assetId) {
-        if(db.execute("UPDATE media_assets SET status='PENDING',ready_at=NULL WHERE id=? AND status='STAGED'",assetId)!=1)
+        if(db.execute("UPDATE media_assets SET status='PENDING',ready_at=NULL WHERE id=? AND status IN ('PENDING','STAGED')",assetId)!=1)
             throw Problem.conflict("AI_RESULT_NOT_REGENERABLE","El resultado ya no puede regenerarse.");
         db.execute("UPDATE media_objects SET width=NULL,height=NULL,byte_size=NULL WHERE asset_id=?",assetId);
     }
