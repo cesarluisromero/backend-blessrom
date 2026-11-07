@@ -31,6 +31,8 @@ def cutout(image,feedback=""):
                 "No scenery, mannequin, person, checkerboard or invented details. Requested correction: "+feedback),
                 size="1024x1536",quality="medium",background="transparent",output_format="png")
             return Image.open(io.BytesIO(base64.b64decode(result.data[0].b64_json))).convert("RGBA")
+    if max(image.size)>2048:
+        image.thumbnail((2048,2048),Image.Resampling.LANCZOS)
     if _session is None:_session=new_session("isnet-general-use")
     return remove(image,session=_session,alpha_matting=True,alpha_matting_foreground_threshold=240,
         alpha_matting_background_threshold=10,alpha_matting_erode_size=8).convert("RGBA")

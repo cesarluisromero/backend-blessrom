@@ -3,7 +3,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     U2NET_HOME=/models \
     NUMBA_CACHE_DIR=/tmp/numba \
-    XDG_CACHE_HOME=/tmp/cache
+    XDG_CACHE_HOME=/tmp/cache \
+    MALLOC_ARENA_MAX=2 \
+    OMP_NUM_THREADS=1
 RUN useradd --system --uid 10001 worker && mkdir -p /app /models && chown -R worker:worker /app /models
 WORKDIR /app
 COPY requirements.txt .
