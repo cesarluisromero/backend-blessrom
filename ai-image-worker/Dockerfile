@@ -1,5 +1,9 @@
 FROM python:3.12-slim
-ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 U2NET_HOME=/models
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    U2NET_HOME=/models \
+    NUMBA_CACHE_DIR=/tmp/numba \
+    XDG_CACHE_HOME=/tmp/cache
 RUN useradd --system --uid 10001 worker && mkdir -p /app /models && chown -R worker:worker /app /models
 WORKDIR /app
 COPY requirements.txt .

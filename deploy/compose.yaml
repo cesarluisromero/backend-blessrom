@@ -38,6 +38,9 @@ services:
     env_file:
       - path: /opt/blessrom/backend.env
         format: raw
+    environment:
+      NUMBA_CACHE_DIR: /tmp/numba
+      XDG_CACHE_HOME: /tmp/cache
     networks:
       - blessrom_backend
     mem_limit: 2g
