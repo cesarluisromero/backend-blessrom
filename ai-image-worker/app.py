@@ -1,7 +1,7 @@
 import base64, io, json, os, tempfile
 from pathlib import Path
 import requests
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, Header, HTTPException, Request
 from PIL import Image, ImageOps
 from rembg import new_session, remove
 from openai import OpenAI
@@ -94,8 +94,12 @@ def generate_cover(sources,style,size,feedback="",desktop=None):
 def health(): return {"status":"UP","model":IMAGE_MODEL}
 
 @app.post("/process")
-def process(work:dict,authorization:str|None=Header(default=None)):
-    auth(authorization);job_type=work["jobType"];request=work["request"]
+async def process(http_request:Request,authorization:str|None=Header(default=None)):
+    auth(authorization)
+    try: work=await http_request.json()
+    except Exception as error: raise HTTPException(400,"cuerpo JSON inválido") from error
+    if not isinstance(work,dict): raise HTTPException(400,"el trabajo debe ser un objeto JSON")
+    job_type=work["jobType"];request=work["request"]
     if job_type=="CUTOUT":
         original=download(work["sourceUrl"]);result=cutout(original,request.get("feedback",""));prepared=variants(result,"product")
         return {"results":[{"slot":0,"content":{},"desktopObjects":upload_variants(prepared,work["outputs"]),"mobileObjects":None}]}
