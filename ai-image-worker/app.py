@@ -10,6 +10,7 @@ app=FastAPI(docs_url=None,redoc_url=None)
 TOKEN=os.environ.get("AI_WORKER_TOKEN","")
 IMAGE_MODEL=os.environ.get("OPENAI_IMAGE_MODEL","gpt-image-2.5-sunburst")
 TEXT_MODEL=os.environ.get("OPENAI_TEXT_MODEL","gpt-5-mini")
+GHOST_QUALITY=os.environ.get("OPENAI_GHOST_QUALITY","high")
 _session=None
 
 def auth(header):
@@ -33,6 +34,25 @@ def cutout(image,feedback=""):
     if _session is None:_session=new_session("isnet-general-use")
     return remove(image,session=_session,alpha_matting=True,alpha_matting_foreground_threshold=240,
         alpha_matting_background_threshold=10,alpha_matting_erode_size=8).convert("RGBA")
+
+def ghost_mannequin(sources,garment_kind,feedback=""):
+    if not os.environ.get("OPENAI_API_KEY"): raise ValueError("OPENAI_API_KEY es obligatoria para generar el maniquí fantasma")
+    detail={"TOP":"interior neckline and natural shoulder, sleeve and torso volume","BOTTOM":"interior waistband and natural hip and leg volume","DRESS":"interior neckline and natural shoulder, waist and skirt volume"}[garment_kind]
+    roles=", ".join(source.get("role","REFERENCE") for source in sources)
+    prompt=("Create a professional ecommerce ghost-mannequin image of exactly the supplied garment. Input image order and roles: "+roles+". The first image is the approved transparent cutout; "
+      "the remaining images are references for front, back and interior details. Reconstruct only "+detail+". Preserve exact color, fabric, print, seams, labels, proportions and geometry. "
+      "No visible person, skin, body parts, mannequin, hanger, clips, supports, text, logo overlay, floor, background or baked shadow. One centered garment, front-facing, fully transparent background. "
+      "Do not invent details that are not supported by the references. Requested correction: "+(feedback or "none"))
+    files=[]
+    try:
+        for index,source in enumerate(sources):
+            image=download(source["imageUrl"]);path=Path(tempfile.gettempdir())/f"ghost-{os.getpid()}-{index}.png";image.save(path,"PNG");files.append(open(path,"rb"))
+        result=OpenAI().images.edit(model=IMAGE_MODEL,image=files,prompt=prompt,size="1600x2000",quality=GHOST_QUALITY,background="transparent",output_format="png")
+        image=Image.open(io.BytesIO(base64.b64decode(result.data[0].b64_json))).convert("RGBA");alpha=image.getchannel("A")
+        if not alpha.getbbox() or alpha.getextrema()[0]>=250: raise ValueError("el maniquí generado no contiene transparencia real")
+        return image
+    finally:
+        for file in files:file.close()
 
 def normalize(image,size):
     alpha=image.getchannel("A");box=alpha.getbbox()
@@ -101,7 +121,9 @@ async def process(http_request:Request,authorization:str|None=Header(default=Non
     if not isinstance(work,dict): raise HTTPException(400,"el trabajo debe ser un objeto JSON")
     job_type=work["jobType"];request=work["request"]
     if job_type=="CUTOUT":
-        original=download(work["sourceUrl"]);result=cutout(original,request.get("feedback",""));prepared=variants(result,"product")
+        if request.get("stage")=="GHOST": result=ghost_mannequin(work.get("sources",[]),request["garmentKind"],request.get("feedback",""))
+        else: result=cutout(download(work["sourceUrl"]),request.get("feedback",""))
+        prepared=variants(result,"product")
         return {"results":[{"slot":0,"content":{},"desktopObjects":upload_variants(prepared,work["outputs"]),"mobileObjects":None}]}
     sources=request.get("sources",[]);styles=["dark tropical editorial inspired by Tarapoto","warm ivory architectural studio","refined tropical overhead flat lay"]
     target=request.get("targetSlot");scope=request.get("scope","");feedback=request.get("feedback","");results=[]

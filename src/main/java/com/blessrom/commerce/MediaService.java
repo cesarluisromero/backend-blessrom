@@ -137,6 +137,7 @@ public class MediaService {
 
     public String aiPutUrl(String key,String contentType){requireConfigured();return presign("PUT",key,contentType);}
     public String aiGetUrl(String key){requireConfigured();return presign("GET",key,null);}
+    public String aiAssetGetUrl(UUID assetId,String variant){var row=db.one("SELECT object_key FROM media_objects WHERE asset_id=? AND variant=?",assetId,variant);return aiGetUrl(String.valueOf(row.get("object_key")));}
     public ObjectMetadata aiHead(String key){requireConfigured();return headObject(key);}
 
     private void completeObjects(UUID assetId,Map<String,Object> asset,CompleteUpload input) {
