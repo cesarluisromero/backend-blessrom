@@ -9,7 +9,7 @@ from openai import OpenAI
 app=FastAPI(docs_url=None,redoc_url=None)
 TOKEN=os.environ.get("AI_WORKER_TOKEN","")
 IMAGE_MODEL=os.environ.get("OPENAI_IMAGE_MODEL","gpt-image-2.5-sunburst")
-TEXT_MODEL=os.environ.get("OPENAI_TEXT_MODEL","gpt-6-luna")
+TEXT_MODEL=os.environ.get("OPENAI_TEXT_MODEL","gpt-5-mini")
 _session=None
 
 def auth(header):

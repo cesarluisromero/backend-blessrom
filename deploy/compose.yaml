@@ -32,7 +32,7 @@ services:
   ai-image-worker:
     profiles: ["ai"]
     build:
-      context: ../ai-image-worker
+      context: ./ai-image-worker
     restart: unless-stopped
     init: true
     env_file:
