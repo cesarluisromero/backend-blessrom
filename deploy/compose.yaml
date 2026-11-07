@@ -29,7 +29,33 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  ai-image-worker:
+    profiles: ["ai"]
+    build:
+      context: ../ai-image-worker
+    restart: unless-stopped
+    init: true
+    env_file:
+      - path: /opt/blessrom/backend.env
+        format: raw
+    networks:
+      - blessrom_backend
+    mem_limit: 2g
+    cpus: 1.0
+    pids_limit: 250
+    read_only: true
+    tmpfs:
+      - /tmp:size=512m,mode=1777
+    volumes:
+      - ai_models:/models
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+
 networks:
   blessrom_backend:
     external: true
     name: blessrom_backend
+
+volumes:
+  ai_models:

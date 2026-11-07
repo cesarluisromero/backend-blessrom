@@ -64,7 +64,7 @@ public class MediaService {
         for(String variant:VARIANTS) {
             String key=(productId==null?"storefront/"+pageKey:"products/"+productId)+"/"+assetId+"/"+variant+".webp";
             db.execute("INSERT INTO media_objects(asset_id,variant,object_key) VALUES(?,?,?)",assetId,variant,key);
-            uploads.add(Map.of("variant",variant,"objectKey",key,"uploadUrl",presign("PUT",key,true),"contentType","image/webp"));
+            uploads.add(Map.of("variant",variant,"objectKey",key,"uploadUrl",presign("PUT",key,"image/webp"),"contentType","image/webp"));
         }
         return Map.of("assetId",assetId,"expiresIn",expirySeconds,"uploads",uploads);
     }
@@ -86,6 +86,58 @@ public class MediaService {
         db.execute("UPDATE media_assets SET status='READY',ready_at=now(),is_primary=false WHERE id=?",assetId);
         return homeAsset(assetId);
     }
+
+    public Map<String,Object> startStagedProduct(UUID productId,String filename,String altText) {
+        requireConfigured();db.one("SELECT id FROM products WHERE id=?",productId);
+        return startOwned(productId,null,new StartUpload(filename,altText));
+    }
+
+    public Map<String,Object> startStagedHome(String filename,String altText) {
+        requireConfigured();return startOwned(null,"home",new StartUpload(filename,altText));
+    }
+
+    public Map<String,Object> uploadTargets(UUID assetId) {
+        requireConfigured();
+        var rows=db.rows("SELECT variant,object_key FROM media_objects WHERE asset_id=? ORDER BY variant",assetId);
+        if(rows.size()!=VARIANTS.size())throw Problem.missing();
+        var uploads=new ArrayList<Map<String,Object>>();
+        for(var row:rows){String key=String.valueOf(row.get("object_key"));uploads.add(Map.of("variant",String.valueOf(row.get("variant")),"objectKey",key,"uploadUrl",presign("PUT",key,"image/webp"),"contentType","image/webp"));}
+        return Map.of("assetId",assetId,"uploads",uploads);
+    }
+
+    public Map<String,Object> completeStagedProduct(UUID productId,UUID assetId,CompleteUpload input) {
+        var asset=db.one("SELECT * FROM media_assets WHERE id=? AND product_id=? FOR UPDATE",assetId,productId);
+        completeObjects(assetId,asset,input);db.execute("UPDATE media_assets SET status='STAGED',ready_at=now(),is_primary=false WHERE id=?",assetId);
+        return stagedAsset(assetId);
+    }
+
+    public Map<String,Object> completeStagedHome(UUID assetId,CompleteUpload input) {
+        var asset=db.one("SELECT * FROM media_assets WHERE id=? AND page_key='home' FOR UPDATE",assetId);
+        completeObjects(assetId,asset,input);db.execute("UPDATE media_assets SET status='STAGED',ready_at=now(),is_primary=false WHERE id=?",assetId);
+        return stagedAsset(assetId);
+    }
+
+    public Map<String,Object> stagedAsset(UUID assetId) {
+        var asset=db.one("SELECT id,product_id,page_key,status,alt_text FROM media_assets WHERE id=? AND status IN ('STAGED','READY')",assetId);
+        var objects=db.rows("SELECT variant,object_key,width,height,byte_size FROM media_objects WHERE asset_id=? ORDER BY variant",assetId);
+        var urls=new LinkedHashMap<String,String>();for(var object:objects)urls.put(String.valueOf(object.get("variant")),publicUrl(String.valueOf(object.get("object_key"))));
+        asset.put("urls",urls);asset.put("objects",objects);return asset;
+    }
+
+    public void promoteHome(UUID assetId) {db.execute("UPDATE media_assets SET status='READY' WHERE id=? AND page_key='home' AND status='STAGED'",assetId);}
+    public void resetStaged(UUID assetId) {
+        if(db.execute("UPDATE media_assets SET status='PENDING',ready_at=NULL WHERE id=? AND status='STAGED'",assetId)!=1)
+            throw Problem.conflict("AI_RESULT_NOT_REGENERABLE","El resultado ya no puede regenerarse.");
+        db.execute("UPDATE media_objects SET width=NULL,height=NULL,byte_size=NULL WHERE asset_id=?",assetId);
+    }
+    public void promoteProduct(UUID productId) {
+        db.execute("UPDATE media_assets m SET status='READY' WHERE m.product_id=? AND m.status='STAGED' AND EXISTS(SELECT 1 FROM ai_studio_results r WHERE r.adopted_asset_id=m.id AND r.status='APPLIED')",productId);
+        db.execute("UPDATE media_assets SET is_primary=true WHERE id=(SELECT id FROM media_assets WHERE product_id=? AND status='READY' ORDER BY is_primary DESC,display_order,created_at LIMIT 1) AND NOT EXISTS(SELECT 1 FROM media_assets WHERE product_id=? AND status='READY' AND is_primary)",productId,productId);
+    }
+
+    public String aiPutUrl(String key,String contentType){requireConfigured();return presign("PUT",key,contentType);}
+    public String aiGetUrl(String key){requireConfigured();return presign("GET",key,null);}
+    public ObjectMetadata aiHead(String key){requireConfigured();return headObject(key);}
 
     private void completeObjects(UUID assetId,Map<String,Object> asset,CompleteUpload input) {
         if(!"PENDING".equals(asset.get("status"))) throw Problem.conflict("MEDIA_ALREADY_COMPLETED","La carga ya fue finalizada.");
@@ -181,7 +233,7 @@ public class MediaService {
 
     ObjectMetadata headObject(String key) {
         try {
-            var request=HttpRequest.newBuilder(URI.create(presign("HEAD",key,false)))
+            var request=HttpRequest.newBuilder(URI.create(presign("HEAD",key,null)))
                 .method("HEAD",HttpRequest.BodyPublishers.noBody()).timeout(Duration.ofSeconds(10)).build();
             var response=client().send(request,HttpResponse.BodyHandlers.discarding());
             if(response.statusCode()==404)throw Problem.conflict("MEDIA_UPLOAD_INCOMPLETE","Termina de subir las cuatro imágenes antes de confirmar.");
@@ -207,7 +259,7 @@ public class MediaService {
 
     private String publicUrl(String key) { return publicBaseUrl.replaceAll("/+$","")+"/"+path(key); }
 
-    private String presign(String method,String key,boolean contentType) {
+    private String presign(String method,String key,String contentType) {
         try {
             URI base=URI.create(endpoint.replaceAll("/+$",""));
             Instant now=Instant.now();String date=DATE.format(now),amzDate=AMZ_DATE.format(now);
@@ -219,10 +271,10 @@ public class MediaService {
             String configuredSecretKey=secretKey.orElseThrow();
             query.put("X-Amz-Credential",configuredAccessKey+"/"+scope);
             query.put("X-Amz-Date",amzDate);query.put("X-Amz-Expires",String.valueOf(expirySeconds));
-            String signedHeaders=contentType?"content-type;host":"host";
+            String signedHeaders=contentType!=null?"content-type;host":"host";
             query.put("X-Amz-SignedHeaders",signedHeaders);
             String canonicalQuery=query.entrySet().stream().map(e->encode(e.getKey())+"="+encode(e.getValue())).reduce((a,b)->a+"&"+b).orElse("");
-            String headers=(contentType?"content-type:image/webp\n":"")+"host:"+base.getAuthority()+"\n";
+            String headers=(contentType!=null?"content-type:"+contentType+"\n":"")+"host:"+base.getAuthority()+"\n";
             String request=method+"\n"+canonicalUri+"\n"+canonicalQuery+"\n"+headers+"\n"+signedHeaders+"\nUNSIGNED-PAYLOAD";
             String toSign="AWS4-HMAC-SHA256\n"+amzDate+"\n"+scope+"\n"+hex(sha256(request.getBytes(StandardCharsets.UTF_8)));
             byte[] keyDate=hmac(("AWS4"+configuredSecretKey).getBytes(StandardCharsets.UTF_8),date);
@@ -234,7 +286,7 @@ public class MediaService {
 
     private void deleteObject(String key) {
         try {
-            var request=HttpRequest.newBuilder(URI.create(presign("DELETE",key,false))).DELETE().timeout(Duration.ofSeconds(15)).build();
+            var request=HttpRequest.newBuilder(URI.create(presign("DELETE",key,null))).DELETE().timeout(Duration.ofSeconds(15)).build();
             int status=client().send(request,HttpResponse.BodyHandlers.discarding()).statusCode();
             if(status!=404&&(status<200||status>=300)) throw new IllegalStateException("R2 rechazó la eliminación con estado "+status);
         } catch(InterruptedException e) { Thread.currentThread().interrupt();throw new IllegalStateException("Se interrumpió la eliminación en R2",e); }

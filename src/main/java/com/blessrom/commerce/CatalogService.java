@@ -11,6 +11,7 @@ public class CatalogService {
     @Inject Db db;
     @Inject Json json;
     @Inject HomeService home;
+    @Inject MediaService media;
     @Inject ActivityService activity;
     @org.eclipse.microprofile.config.inject.ConfigProperty(name="blessrom.payments.mercado-pago.enabled",defaultValue="false") boolean mercadoPagoEnabled;
     @org.eclipse.microprofile.config.inject.ConfigProperty(name="blessrom.payments.mercado-pago.access-token") Optional<String> mercadoPagoToken;
@@ -132,6 +133,7 @@ public class CatalogService {
         UUID revision=UUID.randomUUID();
         db.execute("INSERT INTO product_revisions(id,product_id,content) VALUES(?,?,?::jsonb)",revision,id,json.write(content));
         db.execute("UPDATE products SET published_revision=?,archived=false,version=version+1 WHERE id=?",revision,id);
+        media.promoteProduct(id);
         db.execute("DELETE FROM product_drafts WHERE product_id=?",id);
         activity.record("PRODUCT_PUBLISHED","product",id,"Producto publicado","admin");
         return adminProduct(id);

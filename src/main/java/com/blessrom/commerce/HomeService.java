@@ -32,6 +32,7 @@ public class HomeService {
         @DecimalMin("0") @DecimalMax("100") double frameY,
         @NotNull @Valid Action primary,
         @Valid Action secondary,
+        UUID mobileAssetId,
         Boolean enabled) {}
     @RegisterForReflection
     public record HomeContent(
@@ -107,7 +108,7 @@ public class HomeService {
     private List<HomeSlide> slides(HomeContent content) {
         if(content==null)return List.of();
         if(content.slides()!=null&&!content.slides().isEmpty())return content.slides();
-        return List.of(new HomeSlide(content.eyebrow(),content.title(),content.description(),content.heroAssetId(),content.heroAlt(),content.frameX(),content.frameY(),content.primary(),content.secondary(),true));
+        return List.of(new HomeSlide(content.eyebrow(),content.title(),content.description(),content.heroAssetId(),content.heroAlt(),content.frameX(),content.frameY(),content.primary(),content.secondary(),null,true));
     }
 
     private List<Map<String,Object>> slidePayloads(HomeContent content,boolean publicOnly) {
@@ -117,6 +118,7 @@ public class HomeService {
             if(publicOnly&&(!enabled||slide.heroAssetId()==null))continue;
             var item=new LinkedHashMap<String,Object>();item.put("content",slide);
             if(slide.heroAssetId()!=null)item.put("heroMedia",media.homeAsset(slide.heroAssetId()));
+            if(slide.mobileAssetId()!=null)item.put("mobileMedia",media.homeAsset(slide.mobileAssetId()));
             result.add(item);
         }
         return result;
@@ -130,6 +132,7 @@ public class HomeService {
         for(var slide:slides(content)) {
             boolean enabled=slide.enabled()==null||slide.enabled();
             if(slide.heroAssetId()!=null)media.homeAsset(slide.heroAssetId());
+            if(slide.mobileAssetId()!=null)media.homeAsset(slide.mobileAssetId());
             if(enabled&&slide.heroAssetId()!=null)publishedSlides++;
             if(publishing&&managedSlider&&enabled&&slide.heroAssetId()==null)
                 throw new Problem(400,"HOME_SLIDE_IMAGE_REQUIRED","Cada diapositiva activa necesita una fotografía.");
