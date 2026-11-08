@@ -45,10 +45,10 @@ def ghost_mannequin(sources,garment_kind,feedback=""):
       "the remaining images are references for front, back and interior construction. Present the garment as a hollow three-dimensional retail form with "+detail+". Preserve the supplied garment's color, fabric, artwork, seams, labels, proportions and geometry. "
       "Use one centered front-facing garment on a fully transparent canvas. Do not add display equipment, scenery, floor, background, extra text or baked shadow. "
       "Do not invent details unsupported by the references. Requested correction: "+(feedback or "none"))
-    files=[]
+    files=[];paths=[]
     try:
         for index,source in enumerate(sources):
-            image=download(source["imageUrl"]);path=Path(tempfile.gettempdir())/f"ghost-{os.getpid()}-{index}.png";image.save(path,"PNG");files.append(open(path,"rb"))
+            image=download(source["imageUrl"]);path=Path(tempfile.gettempdir())/f"ghost-{os.getpid()}-{index}.png";image.save(path,"PNG");paths.append(path);files.append((path.name,path.read_bytes(),"image/png"))
         try: result=OpenAI().images.edit(model=IMAGE_MODEL,image=files,prompt=prompt,size="1600x2000",quality=GHOST_QUALITY,background="transparent",output_format="png",moderation="low")
         except BadRequestError as error:
             if getattr(error,"code",None)!="moderation_blocked": raise
@@ -59,7 +59,7 @@ def ghost_mannequin(sources,garment_kind,feedback=""):
         if not alpha.getbbox() or alpha.getextrema()[0]>=250: raise ValueError("el maniquí generado no contiene transparencia real")
         return image
     finally:
-        for file in files:file.close()
+        for path in paths:path.unlink(missing_ok=True)
 
 def normalize(image,size):
     alpha=image.getchannel("A");box=alpha.getbbox()
@@ -106,16 +106,16 @@ No inventes precios, descuentos, materiales, stock ni beneficios. Devuelve solo 
 def generate_cover(sources,style,size,feedback="",desktop=None):
     prompt=(f"Create a premium Blessrom fashion ecommerce campaign in the {style} direction. Use only the supplied garments, preserve their exact colors, seams and geometry. "
       f"Composition {size}; leave safe negative space for HTML copy. No text, logo, watermark, prices or invented garments. {feedback}")
-    files=[]
+    files=[];paths=[]
     try:
         for index,source in enumerate(sources):
-            image=download(source["imageUrl"]);path=Path(tempfile.gettempdir())/f"blessrom-source-{os.getpid()}-{index}.png";image.save(path,"PNG");files.append(open(path,"rb"))
+            image=download(source["imageUrl"]);path=Path(tempfile.gettempdir())/f"blessrom-source-{os.getpid()}-{index}.png";image.save(path,"PNG");paths.append(path);files.append((path.name,path.read_bytes(),"image/png"))
         if desktop is not None:
-            path=Path(tempfile.gettempdir())/f"blessrom-desktop-{os.getpid()}.webp";desktop.save(path,"WEBP");files.insert(0,open(path,"rb"))
+            path=Path(tempfile.gettempdir())/f"blessrom-desktop-{os.getpid()}.webp";desktop.save(path,"WEBP");paths.append(path);files.insert(0,(path.name,path.read_bytes(),"image/webp"))
         result=OpenAI().images.edit(model=IMAGE_MODEL,image=files,prompt=prompt,size=f"{size[0]}x{size[1]}",quality="medium",output_format="webp",background="opaque")
         return Image.open(io.BytesIO(base64.b64decode(result.data[0].b64_json))).convert("RGB")
     finally:
-        for file in files:file.close()
+        for path in paths:path.unlink(missing_ok=True)
 
 @app.get("/health")
 def health(): return {"status":"UP","model":IMAGE_MODEL}
