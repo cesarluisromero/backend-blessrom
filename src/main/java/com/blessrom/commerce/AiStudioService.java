@@ -75,8 +75,8 @@ public class AiStudioService {
         List<UUID> ids=eligibleAssets(input);if(ids.isEmpty())throw new Problem(400,"AI_SOURCES_REQUIRED","Aprueba al menos una prenda antes de generar portadas.");
         var sources=new ArrayList<Map<String,Object>>();for(UUID id:ids){var asset=media.stagedAsset(id);@SuppressWarnings("unchecked")var urls=(Map<String,String>)asset.get("urls");UUID productId=(UUID)asset.get("product_id");var copy=db.one("SELECT COALESCE(d.content->>'name',r.content->>'name',p.slug) AS name,COALESCE(d.content->>'description',r.content->>'description','') AS description FROM products p LEFT JOIN product_drafts d ON d.product_id=p.id LEFT JOIN product_revisions r ON r.id=p.published_revision WHERE p.id=?",productId);var sourceItem=new LinkedHashMap<String,Object>();sourceItem.put("assetId",id);sourceItem.put("imageUrl",urls.get("original"));sourceItem.put("altText",Objects.toString(asset.get("alt_text"),"Prenda Blessrom"));sourceItem.put("name",copy.get("name"));sourceItem.put("description",copy.get("description"));sources.add(sourceItem);}
         var outputs=new ArrayList<Map<String,Object>>();for(int slot=0;slot<3;slot++){
-            var desktop=media.startStagedHome("portada-ia-"+(slot+1)+"-pc.webp","Portada Blessrom generada con prendas aprobadas");
-            var mobile=media.startStagedHome("portada-ia-"+(slot+1)+"-celular.webp","Portada móvil Blessrom generada con prendas aprobadas");
+            var desktop=media.startStagedHome("portada-ia-"+(slot+1)+"-pc.webp","Portada Blessrom generada con prendas aprobadas","DESKTOP");
+            var mobile=media.startStagedHome("portada-ia-"+(slot+1)+"-celular.webp","Portada móvil Blessrom generada con prendas aprobadas","MOBILE");
             outputs.add(Map.of("slot",slot,"desktopAssetId",desktop.get("assetId"),"mobileAssetId",mobile.get("assetId")));
         }
         var request=new LinkedHashMap<String,Object>();request.put("selectionMode",input.selectionMode());request.put("sources",sources);request.put("outputs",outputs);request.put("brief",Objects.requireNonNullElse(input.brief(),""));request.put("homeVersion",input.version());
@@ -121,6 +121,8 @@ public class AiStudioService {
     }
 
     public Map<String,Object> apply(UUID jobId,ApplyRequest input,String actor){
+        var owner=db.one("SELECT page_key FROM ai_studio_jobs WHERE id=? AND created_by=?",jobId,actor);
+        if("home".equals(owner.get("page_key")))home.lock();
         var job=ownJob(jobId,actor);String type=String.valueOf(job.get("job_type"));var requested=new LinkedHashSet<>(input.resultIds());
         var results=new ArrayList<Map<String,Object>>();for(UUID resultId:requested)results.add(db.one("SELECT * FROM ai_studio_results WHERE job_id=? AND id=?",jobId,resultId));results.sort(Comparator.comparingInt(row->((Number)row.get("slot")).intValue()));
         if(results.size()!=requested.size())throw Problem.conflict("AI_RESULT_REQUIRED","Selecciona un resultado válido.");

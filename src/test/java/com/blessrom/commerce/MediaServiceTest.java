@@ -33,4 +33,23 @@ class MediaServiceTest {
         assertEquals("MEDIA_UPLOAD_INCOMPLETE",assertThrows(Problem.class,()->service.completeHome(UUID.randomUUID(),new MediaService.CompleteUpload(objects))).code);
         assertFalse(db.madeReady);
     }
+
+    @Test void eachHomeRoleRequiresItsFourExactDimensions() {
+        var desktop=new HashMap<>(Map.of(
+            "original",image("original",2160,720),"large",image("large",1200,400),
+            "medium",image("medium",720,240),"thumbnail",image("thumbnail",320,107)));
+        var mobile=Map.of(
+            "original",image("original",1024,1280),"large",image("large",960,1200),
+            "medium",image("medium",720,900),"thumbnail",image("thumbnail",320,400));
+        assertDoesNotThrow(()->MediaService.validateHomeDimensions("DESKTOP",desktop));
+        assertDoesNotThrow(()->MediaService.validateHomeDimensions("MOBILE",mobile));
+        desktop.put("thumbnail",image("thumbnail",320,106));
+        assertEquals("HOME_MEDIA_DIMENSIONS_INVALID",assertThrows(Problem.class,
+            ()->MediaService.validateHomeDimensions("DESKTOP",desktop)).code);
+        assertThrows(Problem.class,()->MediaService.validateHomeDimensions("DESKTOP",mobile));
+    }
+
+    private MediaService.UploadedObject image(String variant,int width,int height) {
+        return new MediaService.UploadedObject(variant,width,height,1234);
+    }
 }

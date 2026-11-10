@@ -2,7 +2,7 @@ import base64, io, json, os, tempfile
 from pathlib import Path
 import requests
 from fastapi import FastAPI, Header, HTTPException, Request
-from PIL import Image, ImageOps
+from PIL import Image, ImageChops, ImageOps
 from rembg import new_session, remove
 from openai import OpenAI, BadRequestError
 
@@ -103,9 +103,28 @@ No inventes precios, descuentos, materiales, stock ni beneficios. Devuelve solo 
     text=response.output_text.strip();start=text.find("{");end=text.rfind("}")+1
     value=json.loads(text[start:end]);value["target"]="catalog";return value
 
+def validate_cover(data,size):
+    if not data: raise ValueError("la portada generada está vacía")
+    with Image.open(io.BytesIO(data)) as generated:
+        generated.load()
+        if generated.format!="WEBP": raise ValueError("la portada generada no tiene formato WebP")
+        if generated.size!=size: raise ValueError(f"la portada generada debe medir {size[0]}x{size[1]}")
+        if "A" in generated.getbands() and generated.getchannel("A").getextrema()[0]<255:
+            raise ValueError("la portada generada debe ser completamente opaca")
+        image=generated.convert("RGB")
+    solid=Image.new("RGB",size,image.getpixel((0,0)))
+    if ImageChops.difference(image,solid).getbbox() is None: raise ValueError("la portada generada no contiene una composición visible")
+    return image
+
 def generate_cover(sources,style,size,feedback="",desktop=None):
-    prompt=(f"Create a premium Blessrom fashion ecommerce campaign in the {style} direction. Use only the supplied garments, preserve their exact colors, seams and geometry. "
-      f"Composition {size}; leave safe negative space for HTML copy. No text, logo, watermark, prices or invented garments. {feedback}")
+    prompt=(f"Create a premium Blessrom fashion ecommerce campaign in the {style} direction using every supplied approved garment and no other apparel. "
+      "Make the garments the dominant focal subject: together they should occupy approximately 45 to 65 percent of the usable canvas. Show every garment fully, sharply and at high visual contrast, "
+      "with no cropping, overlap, person, mannequin, prop or scenery obscuring any part. Preserve the exact supplied colors, artwork, fabric appearance, seams, proportions and geometry. "
+      f"Compose exactly for {size[0]}x{size[1]} and reserve a clean safe area for separate HTML copy. Do not render text, logos, watermarks, prices, discounts or invented garments. "
+      f"Administrator correction: {feedback or 'none'}.")
+    if desktop is not None:
+        prompt+=(" The first reference is the approved desktop campaign and is provided only to retain its art direction. "
+          "Create an independent mobile composition from the subsequent garment references; keep all garments prominent and fully visible rather than merely cropping the desktop image.")
     files=[];paths=[]
     try:
         for index,source in enumerate(sources):
@@ -113,7 +132,8 @@ def generate_cover(sources,style,size,feedback="",desktop=None):
         if desktop is not None:
             path=Path(tempfile.gettempdir())/f"blessrom-desktop-{os.getpid()}.webp";desktop.save(path,"WEBP");paths.append(path);files.insert(0,(path.name,path.read_bytes(),"image/webp"))
         result=OpenAI().images.edit(model=IMAGE_MODEL,image=files,prompt=prompt,size=f"{size[0]}x{size[1]}",quality="medium",output_format="webp",background="opaque")
-        return Image.open(io.BytesIO(base64.b64decode(result.data[0].b64_json))).convert("RGB")
+        encoded=result.data[0].b64_json if result.data else None
+        return validate_cover(base64.b64decode(encoded) if encoded else b"",size)
     finally:
         for path in paths:path.unlink(missing_ok=True)
 

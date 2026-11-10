@@ -16,6 +16,7 @@ public class HomeService {
     @Inject Json json;
     @Inject MediaService media;
     @Inject ActivityService activity;
+    @Inject HomeSlidePurgeService purges;
 
     @RegisterForReflection
     public record Target(@NotBlank @Pattern(regexp="catalog|category|collection|collections") String type, UUID id) {}
@@ -56,7 +57,7 @@ public class HomeService {
     public record SaveDraft(@Min(0) long version, @NotNull @Valid HomeContent content) {}
 
     public Map<String,Object> admin() {
-        var page=db.one("SELECT * FROM storefront_pages WHERE page_key='home'");
+        var page=db.one("SELECT * FROM storefront_pages WHERE page_key='home' FOR SHARE");
         HomeContent draft=read(page.get("draft_content")), published=null;
         if(page.get("published_revision_id")!=null)
             published=read(db.one("SELECT content FROM storefront_revisions WHERE id=?",page.get("published_revision_id")).get("content"));
@@ -83,29 +84,85 @@ public class HomeService {
         HomeContent content=read(page.get("draft_content"));
         if(content==null) throw Problem.conflict("HOME_DRAFT_REQUIRED","Guarda un borrador antes de publicar la portada.");
         validate(content,true);
-        UUID revision=UUID.randomUUID();
-        db.execute("INSERT INTO storefront_revisions(id,page_key,content,created_by) VALUES(?,'home',?::jsonb,?)",revision,json.write(content),actor);
-        db.execute("UPDATE storefront_pages SET published_revision_id=?,published_at=now(),draft_content=NULL,version=version+1,updated_at=now() WHERE page_key='home'",revision);
+        UUID revision=replacePublished(content,actor);
         activity.record("HOME_PUBLISHED","home",revision,"Portada publicada",actor);
         return admin();
     }
 
+    public Map<String,Object> deletePublishedSlide(UUID desktopAssetId,long expected,String key,String actor) {
+        if(key==null||!key.matches("[A-Za-z0-9_.-]{8,200}"))
+            throw new Problem(400,"INVALID_IDEMPOTENCY_KEY","Envía una clave de idempotencia de 8 a 200 caracteres.");
+        if(expected<0)throw new Problem(400,"INVALID_HOME_VERSION","Indica la versión de la portada.");
+        var page=lock();
+        var replay=purges.replay(desktopAssetId,expected,key,actor);
+        if(replay!=null)return Map.of("home",admin(),"purge",replay);
+        Problem.version(Db.version(page),expected);
+        if(page.get("draft_content")!=null)
+            throw Problem.conflict("HOME_DRAFT_PENDING","Publica o resuelve el borrador antes de eliminar una portada publicada.");
+        UUID publishedRevision=(UUID)page.get("published_revision_id");
+        if(publishedRevision==null)throw Problem.missing();
+        var removal=withoutPublishedSlide(revision(publishedRevision),desktopAssetId);
+        var purge=purges.enqueue(desktopAssetId,removal.assetIds(),expected,key,actor);
+        UUID revision=replacePublished(removal.content(),actor);
+        purges.removeHistoricalRevisions(removal.assetIds(),revision);
+        activity.record("HOME_SLIDE_DELETED","home",null,"Diapositiva publicada eliminada",actor);
+        return Map.of("home",admin(),"purge",purge);
+    }
+
+    record SlideRemoval(HomeContent content,Set<UUID> assetIds) {}
+
+    static SlideRemoval withoutPublishedSlide(HomeContent published,UUID desktopAssetId) {
+        var remaining=new ArrayList<>(slides(published));
+        var matches=remaining.stream().filter(slide->desktopAssetId.equals(slide.heroAssetId())).toList();
+        if(matches.isEmpty())throw Problem.missing();
+        if(matches.size()>1)throw sharedAsset();
+        HomeSlide removed=matches.getFirst();
+        remaining.remove(removed);
+        if(remaining.stream().noneMatch(slide->!Boolean.FALSE.equals(slide.enabled())&&slide.heroAssetId()!=null))
+            throw Problem.conflict("HOME_LAST_SLIDE","La portada debe conservar al menos una diapositiva activa con fotografía.");
+        var assets=new LinkedHashSet<UUID>();
+        assets.add(desktopAssetId);
+        if(removed.mobileAssetId()!=null)assets.add(removed.mobileAssetId());
+        if(remaining.stream().anyMatch(slide->assets.contains(slide.heroAssetId())||assets.contains(slide.mobileAssetId())))
+            throw sharedAsset();
+
+        HomeSlide first=remaining.getFirst();
+        var content=new HomeContent(first.eyebrow(),first.title(),first.description(),first.heroAssetId(),first.heroAlt(),
+            first.frameX(),first.frameY(),first.primary(),first.secondary(),published.shortcuts(),List.copyOf(remaining));
+        return new SlideRemoval(content,Set.copyOf(assets));
+    }
+
+    private static Problem sharedAsset() {
+        return Problem.conflict("HOME_SLIDE_MEDIA_SHARED","Otra diapositiva usa una de estas imágenes. Quita esa referencia antes de eliminarla.");
+    }
+
+    private UUID replacePublished(HomeContent content,String actor) {
+        UUID revision=UUID.randomUUID();
+        db.execute("INSERT INTO storefront_revisions(id,page_key,content,created_by) VALUES(?,'home',?::jsonb,?)",revision,json.write(content),actor);
+        db.execute("UPDATE storefront_pages SET published_revision_id=?,published_at=now(),draft_content=NULL,version=version+1,updated_at=now() WHERE page_key='home'",revision);
+        return revision;
+    }
+
     public Map<String,Object> publicHome() {
-        var rows=db.rows("SELECT r.id,r.content FROM storefront_pages p JOIN storefront_revisions r ON r.id=p.published_revision_id WHERE p.page_key='home'");
-        if(rows.isEmpty()) return null;
-        var row=rows.getFirst();HomeContent content=read(row.get("content"));
+        // Keep the revision pointer and its media readable for the duration of this response.
+        UUID revisionId=(UUID)db.one("SELECT published_revision_id FROM storefront_pages WHERE page_key='home' FOR SHARE").get("published_revision_id");
+        if(revisionId==null)return null;
+        HomeContent content=revision(revisionId);
         var result=new LinkedHashMap<String,Object>();
-        result.put("revisionId",row.get("id"));result.put("content",content);
+        result.put("revisionId",revisionId);result.put("content",content);
         var hero=hero(content);if(hero!=null)result.put("heroMedia",hero);
         result.put("slides",slidePayloads(content,true));
         return result;
     }
 
-    private Map<String,Object> lock() {return db.one("SELECT * FROM storefront_pages WHERE page_key='home' FOR UPDATE");}
+    Map<String,Object> lock() {return db.one("SELECT * FROM storefront_pages WHERE page_key='home' FOR UPDATE");}
+    private HomeContent revision(UUID id) {
+        return read(db.one("SELECT content FROM storefront_revisions WHERE id=? AND page_key='home'",id).get("content"));
+    }
     private HomeContent read(Object value) {return value==null?null:json.read(value,HomeContent.class);}
     private Map<String,Object> hero(HomeContent content) {return content==null||content.heroAssetId()==null?null:media.homeAsset(content.heroAssetId());}
 
-    private List<HomeSlide> slides(HomeContent content) {
+    private static List<HomeSlide> slides(HomeContent content) {
         if(content==null)return List.of();
         if(content.slides()!=null&&!content.slides().isEmpty())return content.slides();
         return List.of(new HomeSlide(content.eyebrow(),content.title(),content.description(),content.heroAssetId(),content.heroAlt(),content.frameX(),content.frameY(),content.primary(),content.secondary(),null,true));
@@ -126,16 +183,16 @@ public class HomeService {
 
     void validate(HomeContent content,boolean publishing) {
         validateStructure(content);
-        if(content.heroAssetId()!=null)media.homeAsset(content.heroAssetId());
+        if(content.heroAssetId()!=null)media.requireHomeRole(content.heroAssetId(),"DESKTOP");
         boolean managedSlider=content.slides()!=null;
         int publishedSlides=0;
         for(var slide:slides(content)) {
             boolean enabled=slide.enabled()==null||slide.enabled();
-            if(slide.heroAssetId()!=null)media.homeAsset(slide.heroAssetId());
-            if(slide.mobileAssetId()!=null)media.homeAsset(slide.mobileAssetId());
+            if(slide.heroAssetId()!=null)media.requireHomeRole(slide.heroAssetId(),"DESKTOP");
+            if(slide.mobileAssetId()!=null)media.requireHomeRole(slide.mobileAssetId(),"MOBILE");
             if(enabled&&slide.heroAssetId()!=null)publishedSlides++;
-            if(publishing&&managedSlider&&enabled&&slide.heroAssetId()==null)
-                throw new Problem(400,"HOME_SLIDE_IMAGE_REQUIRED","Cada diapositiva activa necesita una fotografía.");
+            if(publishing&&managedSlider&&enabled&&(slide.heroAssetId()==null||slide.mobileAssetId()==null))
+                throw new Problem(400,"HOME_SLIDE_IMAGES_REQUIRED","Cada diapositiva activa necesita imágenes de escritorio y celular.");
         }
         if(publishing&&managedSlider&&publishedSlides==0)
             throw new Problem(400,"HOME_SLIDES_REQUIRED","Agrega al menos una diapositiva activa con fotografía antes de publicar.");

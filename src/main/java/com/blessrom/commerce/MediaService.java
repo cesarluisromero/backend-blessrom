@@ -36,7 +36,10 @@ public class MediaService {
     @ConfigProperty(name="blessrom.media.upload-expiry-seconds",defaultValue="600") int expirySeconds;
     private volatile HttpClient client;
 
-    public record StartUpload(@NotBlank @Size(max=255) String filename,@Size(max=300) String altText) {}
+    public record StartUpload(@NotBlank @Size(max=255) String filename,@Size(max=300) String altText,
+        @Pattern(regexp="DESKTOP|MOBILE") String role) {
+        public StartUpload(String filename,String altText) { this(filename,altText,null); }
+    }
     public record UploadedObject(@NotBlank @Pattern(regexp="original|large|medium|thumbnail") String variant,
         @Min(1) @Max(10000) int width,@Min(1) @Max(10000) int height,@Min(1) @Max(10_485_760) long byteSize) {}
     public record CompleteUpload(@NotNull @Size(min=4,max=4) List<@NotNull @Valid UploadedObject> objects) {}
@@ -58,14 +61,15 @@ public class MediaService {
     private Map<String,Object> startOwned(UUID productId,String pageKey,StartUpload input) {
         UUID assetId=UUID.randomUUID();
         String safeName=input.filename().replaceAll("[^A-Za-z0-9._-]","_");
-        db.execute("INSERT INTO media_assets(id,product_id,page_key,original_filename,alt_text) VALUES(?,?,?,?,?)",
-            assetId,productId,pageKey,safeName,input.altText());
+        db.execute("INSERT INTO media_assets(id,product_id,page_key,original_filename,alt_text,home_role) VALUES(?,?,?,?,?,?)",
+            assetId,productId,pageKey,safeName,input.altText(),pageKey==null?null:input.role());
         var uploads=new ArrayList<Map<String,Object>>();
         for(String variant:VARIANTS) {
             String key=(productId==null?"storefront/"+pageKey:"products/"+productId)+"/"+assetId+"/"+variant+".webp";
             db.execute("INSERT INTO media_objects(asset_id,variant,object_key) VALUES(?,?,?)",assetId,variant,key);
             uploads.add(Map.of("variant",variant,"objectKey",key,"uploadUrl",presign("PUT",key,"image/webp"),"contentType","image/webp"));
         }
+        if(pageKey!=null)rememberUploadExpiry(assetId);
         return Map.of("assetId",assetId,"expiresIn",expirySeconds,"uploads",uploads);
     }
 
@@ -93,16 +97,29 @@ public class MediaService {
     }
 
     public Map<String,Object> startStagedHome(String filename,String altText) {
-        requireConfigured();return startOwned(null,"home",new StartUpload(filename,altText));
+        return startStagedHome(filename,altText,null);
+    }
+
+    public Map<String,Object> startStagedHome(String filename,String altText,String role) {
+        requireConfigured();return startOwned(null,"home",new StartUpload(filename,altText,role));
     }
 
     public Map<String,Object> uploadTargets(UUID assetId) {
         requireConfigured();
+        var owner=db.one("SELECT page_key,status FROM media_assets WHERE id=? FOR UPDATE",assetId);
+        boolean home=owner.get("page_key")!=null;
+        if(home&&!"PENDING".equals(owner.get("status")))
+            throw Problem.conflict("HOME_MEDIA_UPLOAD_CLOSED","La imagen de portada ya no admite cargas.");
         var rows=db.rows("SELECT variant,object_key FROM media_objects WHERE asset_id=? ORDER BY variant",assetId);
         if(rows.size()!=VARIANTS.size())throw Problem.missing();
         var uploads=new ArrayList<Map<String,Object>>();
         for(var row:rows){String key=String.valueOf(row.get("object_key"));uploads.add(Map.of("variant",String.valueOf(row.get("variant")),"objectKey",key,"uploadUrl",presign("PUT",key,"image/webp"),"contentType","image/webp"));}
+        if(home)rememberUploadExpiry(assetId);
         return Map.of("assetId",assetId,"uploads",uploads);
+    }
+
+    private void rememberUploadExpiry(UUID assetId) {
+        db.execute("UPDATE media_assets SET upload_expires_at=? WHERE id=?",Instant.now().plusSeconds(expirySeconds),assetId);
     }
 
     public Map<String,Object> completeStagedProduct(UUID productId,UUID assetId,CompleteUpload input) {
@@ -118,7 +135,7 @@ public class MediaService {
     }
 
     public Map<String,Object> stagedAsset(UUID assetId) {
-        var asset=db.one("SELECT id,product_id,page_key,status,alt_text FROM media_assets WHERE id=? AND status IN ('STAGED','READY')",assetId);
+        var asset=db.one("SELECT id,product_id,page_key,status,alt_text,home_role AS role FROM media_assets WHERE id=? AND status IN ('STAGED','READY')",assetId);
         var objects=db.rows("SELECT variant,object_key,width,height,byte_size FROM media_objects WHERE asset_id=? ORDER BY variant",assetId);
         var urls=new LinkedHashMap<String,String>();for(var object:objects)urls.put(String.valueOf(object.get("variant")),publicUrl(String.valueOf(object.get("object_key"))));
         asset.put("urls",urls);asset.put("objects",objects);return asset;
@@ -153,6 +170,7 @@ public class MediaService {
         }
         if(!supplied.keySet().equals(new HashSet<>(VARIANTS)))
             throw new Problem(400,"MISSING_MEDIA_VARIANT","Completa las cuatro variantes WebP.");
+        validateHomeDimensions((String)asset.get("home_role"),supplied);
         var objects=db.rows("SELECT variant,object_key FROM media_objects WHERE asset_id=?",assetId);
         if(objects.size()!=VARIANTS.size())throw Problem.conflict("MEDIA_UPLOAD_INCOMPLETE","La carga no contiene todos los archivos esperados.");
         // The browser supplies dimensions, but never decides whether an object exists in R2.
@@ -215,12 +233,35 @@ public class MediaService {
 
     /** Only READY assets owned by the homepage can be referenced by a page draft or revision. */
     public Map<String,Object> homeAsset(UUID assetId) {
-        var asset=db.one("SELECT id,alt_text,is_primary FROM media_assets WHERE id=? AND page_key='home' AND status='READY'",assetId);
+        var asset=db.one("SELECT id,alt_text,is_primary,home_role AS role FROM media_assets WHERE id=? AND page_key='home' AND status='READY'",assetId);
         var urls=new LinkedHashMap<String,String>();
         var objects=db.rows("SELECT variant,object_key,width,height,byte_size FROM media_objects WHERE asset_id=? ORDER BY variant",assetId);
         for(var object:objects)
             urls.put(String.valueOf(object.get("variant")),publicUrl(String.valueOf(object.get("object_key"))));
         asset.put("urls",urls);asset.put("objects",objects);return asset;
+    }
+
+    void requireHomeRole(UUID assetId,String expected) {
+        var asset=db.one("SELECT home_role FROM media_assets WHERE id=? AND page_key='home' AND status='READY'",assetId);
+        Object role=asset.get("home_role");
+        if(role!=null&&!expected.equals(role))
+            throw new Problem(400,"HOME_MEDIA_ROLE_MISMATCH","La imagen no corresponde al tamaño de escritorio o celular de esta diapositiva.");
+    }
+
+    static void validateHomeDimensions(String role,Map<String,UploadedObject> objects) {
+        if(role==null)return;
+        int[][] dimensions=switch(role) {
+            case "DESKTOP" -> new int[][]{{2160,720},{1200,400},{720,240},{320,107}};
+            case "MOBILE" -> new int[][]{{1024,1280},{960,1200},{720,900},{320,400}};
+            default -> throw new Problem(400,"INVALID_HOME_MEDIA_ROLE","Elige una imagen para escritorio o celular.");
+        };
+        for(int index=0;index<VARIANTS.size();index++) {
+            String variant=VARIANTS.get(index);
+            var object=objects.get(variant);
+            int width=dimensions[index][0],height=dimensions[index][1];
+            if(object==null||object.width()!=width||object.height()!=height)
+                throw new Problem(400,"HOME_MEDIA_DIMENSIONS_INVALID","La variante "+variant+" debe medir "+width+" × "+height+" píxeles.");
+        }
     }
 
     record ObjectMetadata(String contentType,long byteSize) {}
@@ -258,7 +299,7 @@ public class MediaService {
         if(expirySeconds<60||expirySeconds>3600) throw new IllegalStateException("R2 upload expiry must be between 60 and 3600 seconds");
     }
 
-    private String publicUrl(String key) { return publicBaseUrl.replaceAll("/+$","")+"/"+path(key); }
+    String publicUrl(String key) { return publicBaseUrl.replaceAll("/+$","")+"/"+path(key); }
 
     private String presign(String method,String key,String contentType) {
         try {
@@ -292,6 +333,28 @@ public class MediaService {
             if(status!=404&&(status<200||status>=300)) throw new IllegalStateException("R2 rechazó la eliminación con estado "+status);
         } catch(InterruptedException e) { Thread.currentThread().interrupt();throw new IllegalStateException("Se interrumpió la eliminación en R2",e); }
         catch(Exception e) { throw new IllegalStateException("No se pudo eliminar el objeto de R2",e); }
+    }
+
+    @Transactional(Transactional.TxType.NOT_SUPPORTED)
+    public void purgeHomeObject(String key) {
+        requireConfigured();
+        if(!key.startsWith("storefront/home/"))throw new IllegalArgumentException("Clave de portada inválida");
+        try {
+            var deletion=HttpRequest.newBuilder(URI.create(presign("DELETE",key,null)))
+                .DELETE().timeout(Duration.ofSeconds(15)).build();
+            int status=client().send(deletion,HttpResponse.BodyHandlers.discarding()).statusCode();
+            // DELETE is idempotent for the purge queue: an object removed by a previous attempt is already in the desired state.
+            if(status!=404&&(status<200||status>=300))throw new IllegalStateException("R2 no confirmó la eliminación");
+            var check=HttpRequest.newBuilder(URI.create(presign("HEAD",key,null)))
+                .method("HEAD",HttpRequest.BodyPublishers.noBody()).timeout(Duration.ofSeconds(10)).build();
+            if(client().send(check,HttpResponse.BodyHandlers.discarding()).statusCode()!=404)
+                throw new IllegalStateException("R2 no confirmó que el objeto está ausente");
+        } catch(InterruptedException error) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("Se interrumpió la eliminación en R2",error);
+        } catch(java.io.IOException error) {
+            throw new IllegalStateException("No se pudo verificar la eliminación en R2",error);
+        }
     }
 
     private static String path(String value) { return Arrays.stream(value.split("/",-1)).map(MediaService::encode).reduce((a,b)->a+"/"+b).orElse(""); }

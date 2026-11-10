@@ -18,12 +18,19 @@ import java.util.UUID;
 public class HomeResource {
     @Inject HomeService home;
     @Inject MediaService media;
+    @Inject HomeSlidePurgeService purges;
     @Inject SecurityIdentity identity;
     private String actor(){return identity.getPrincipal().getName();}
 
     @GET public Object get(){return home.admin();}
     @PUT @Path("/draft") public Object save(@NotNull @Valid HomeService.SaveDraft input){return home.saveDraft(input,actor());}
     @POST @Path("/publish") public Object publish(@NotNull @Valid Api.Version input){return home.publish(input.version(),actor());}
+    @DELETE @Path("/slides/{desktopAssetId}") public Response deleteSlide(@PathParam("desktopAssetId") UUID desktopAssetId,
+        @QueryParam("version") Long version,@HeaderParam("Idempotency-Key") String key) {
+        if(version==null)throw new Problem(400,"VERSION_REQUIRED","Indica la versión de la portada.");
+        return Response.accepted(home.deletePublishedSlide(desktopAssetId,version,key,actor())).build();
+    }
+    @GET @Path("/purges/{id}") public Object purge(@PathParam("id") UUID id) {return purges.status(id);}
     @POST @Path("/media/uploads") public Response start(@NotNull @Valid MediaService.StartUpload input){
         return Response.status(201).entity(media.startHome(input)).build();
     }
