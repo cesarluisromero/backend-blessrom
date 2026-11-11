@@ -25,7 +25,7 @@ public final class Api {
     public record AttributeOption(@NotBlank @Size(max=100) String value,@NotBlank @Size(max=100) String label,
         @Pattern(regexp="#[0-9A-Fa-f]{6}") String swatch,@Min(0) Integer displayOrder,Boolean active) {}
     @RegisterForReflection
-    public record Variant(@NotBlank @Size(max=80) @Pattern(regexp="[A-Za-z0-9_-]+") String sku,
+    public record Variant(@Size(max=80) @Pattern(regexp="[A-Za-z0-9_-]*") String sku,
         @NotNull @Size(max=20) Map<@NotBlank @Size(max=40) String,@NotBlank @Size(max=100) String> attributes,
         @NotNull @DecimalMin("0.01") @Digits(integer=8,fraction=2) BigDecimal price, boolean enabled) {}
     @RegisterForReflection
@@ -35,7 +35,7 @@ public final class Api {
         @Size(max=20) List<@NotNull UUID> collectionIds) {
         public Draft(String name,String description,UUID categoryId,String imageUrl,List<Variant> variants){this(name,description,categoryId,imageUrl,variants,List.of());}
     }
-    public record CreateProduct(@NotBlank @Size(max=120) @Pattern(regexp="[a-z0-9]+(?:-[a-z0-9]+)*") String slug,
+    public record CreateProduct(@Size(max=120) @Pattern(regexp="[a-z0-9]+(?:-[a-z0-9]+)*") String slug,
         @NotNull @Valid Draft draft) {}
     public record UpdateDraft(@Min(0) long version, @NotNull @Valid Draft draft) {}
     public record Version(@Min(0) long version) {}

@@ -4,6 +4,7 @@ import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import jakarta.transaction.Transactional;
 import java.util.*;
+import java.text.Normalizer;
 
 @ApplicationScoped
 @Transactional
@@ -98,7 +99,9 @@ public class CatalogService {
     }
     public Map<String,Object> create(Api.CreateProduct input) {
         UUID id=UUID.randomUUID();
-        db.execute("INSERT INTO products(id,slug) VALUES(?,?)",id,input.slug());
+        db.one("SELECT pg_advisory_xact_lock(hashtext('blessrom-product-slug')) AS locked");
+        String slug=input.slug()==null||input.slug().isBlank()?generatedSlug(input.draft().name()):input.slug();
+        db.execute("INSERT INTO products(id,slug) VALUES(?,?)",id,slug);
         saveDraft(id,input.draft());
         activity.record("PRODUCT_DRAFT_SAVED","product",id,"Borrador de producto guardado","admin");
         return adminProduct(id);
@@ -117,7 +120,10 @@ public class CatalogService {
         if(collectionIds.size()!=new HashSet<>(collectionIds).size()) throw new Problem(400,"DUPLICATE_COLLECTION","No repitas una colección.");
         for(UUID collectionId:collectionIds) db.one("SELECT id FROM collections WHERE id=?",collectionId);
         var skus=new HashSet<String>();
+        var variants=new ArrayList<Api.Variant>();
         for(var variant:draft.variants()) {
+            String sku=variant.sku()==null||variant.sku().isBlank()?generatedSku():variant.sku();
+            variant=new Api.Variant(sku,variant.attributes(),variant.price(),variant.enabled());
             if(!skus.add(variant.sku())) throw Problem.conflict("DUPLICATE_SKU","Los SKU de las variantes deben ser distintos.");
             var existing=db.rows("SELECT * FROM variants WHERE sku=?",variant.sku());
             if(!existing.isEmpty()&&!productId.equals(existing.getFirst().get("product_id")))
@@ -127,8 +133,27 @@ public class CatalogService {
                 db.execute("INSERT INTO variants(id,product_id,sku) VALUES(?,?,?)",id,productId,variant.sku());
                 db.execute("INSERT INTO inventory(variant_id) VALUES(?)",id);
             }
+            variants.add(variant);
         }
-        db.execute("INSERT INTO product_drafts(product_id,content) VALUES(?,?::jsonb) ON CONFLICT(product_id) DO UPDATE SET content=EXCLUDED.content",productId,json.write(draft));
+        var normalized=new Api.Draft(draft.name(),draft.description(),draft.categoryId(),draft.imageUrl(),variants,draft.collectionIds());
+        db.execute("INSERT INTO product_drafts(product_id,content) VALUES(?,?::jsonb) ON CONFLICT(product_id) DO UPDATE SET content=EXCLUDED.content",productId,json.write(normalized));
+    }
+    private String generatedSlug(String name) {
+        String base=Normalizer.normalize(name,Normalizer.Form.NFD).replaceAll("\\p{M}","").toLowerCase(Locale.ROOT)
+            .replaceAll("[^a-z0-9]+","-").replaceAll("^-|-$","");
+        if(base.isBlank())base="producto";
+        base=base.substring(0,Math.min(base.length(),110)).replaceAll("-$","");
+        String candidate=base;
+        for(int suffix=2;!db.rows("SELECT id FROM products WHERE slug=?",candidate).isEmpty();suffix++)
+            candidate=base.substring(0,Math.min(base.length(),120-("-"+suffix).length()))+"-"+suffix;
+        return candidate;
+    }
+    private String generatedSku() {
+        while(true){
+            long number=((Number)db.one("SELECT nextval('product_variant_sku_seq') AS value").get("value")).longValue();
+            String candidate="BRV-"+String.format(Locale.ROOT,"%06d",number);
+            if(db.rows("SELECT id FROM variants WHERE sku=?",candidate).isEmpty())return candidate;
+        }
     }
     public Map<String,Object> publish(UUID id,long expected) {
         var product=lock(id);Problem.version(Db.version(product),expected);

@@ -140,6 +140,33 @@ def generate_cover(sources,style,size,feedback="",desktop=None):
 @app.get("/health")
 def health(): return {"status":"UP","model":IMAGE_MODEL}
 
+@app.post("/suggest-product")
+async def suggest_product(http_request:Request,authorization:str|None=Header(default=None)):
+    auth(authorization)
+    work=await http_request.json()
+    image=download(work["imageUrl"])
+    image.thumbnail((1024,1024),Image.Resampling.LANCZOS)
+    image=image.convert("RGB")
+    encoded=io.BytesIO();image.save(encoded,"JPEG",quality=85)
+    categories=work.get("categories",[]);colors=work.get("colors",[])
+    prompt=("Analiza esta fotografía de una prenda para preparar un borrador de catálogo Blessrom. "
+      "Devuelve solo JSON con name, description, categoryId y color. "
+      "Usa categoryId únicamente de esta lista: "+json.dumps(categories,ensure_ascii=False)+". "
+      "Usa color únicamente de esta lista de valores internos: "+json.dumps(colors,ensure_ascii=False)+". "
+      "Si no puedes determinar categoría o color, usa cadena vacía. No infieras talla, precio, marca, composición, stock ni atributos invisibles. "
+      "Describe solo rasgos visibles y evita afirmaciones no verificables. Nombre máximo 180 caracteres, descripción máximo 5000.")
+    response=OpenAI().responses.create(model=TEXT_MODEL,input=[{"role":"user","content":[
+      {"type":"input_text","text":prompt},
+      {"type":"input_image","image_url":"data:image/jpeg;base64,"+base64.b64encode(encoded.getvalue()).decode("ascii")}
+    ]}])
+    raw=response.output_text.strip();start=raw.find("{");end=raw.rfind("}")+1
+    if start<0 or end<=start: raise HTTPException(502,"El asistente no devolvió sugerencias válidas")
+    value=json.loads(raw[start:end])
+    allowed_categories={str(item["id"]) for item in categories};allowed_colors={str(item["value"]) for item in colors}
+    return {"name":str(value.get("name", ""))[:180],"description":str(value.get("description", ""))[:5000],
+      "categoryId":str(value.get("categoryId", "")) if str(value.get("categoryId", "")) in allowed_categories else "",
+      "color":str(value.get("color", "")) if str(value.get("color", "")) in allowed_colors else ""}
+
 @app.post("/process")
 async def process(http_request:Request,authorization:str|None=Header(default=None)):
     auth(authorization)

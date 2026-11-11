@@ -12,10 +12,12 @@ import java.util.*;
 @Path("/api/v1/admin/ai-studio") @RolesAllowed("admin") @Produces(MediaType.APPLICATION_JSON) @Consumes(MediaType.APPLICATION_JSON)
 public class AiStudioResource {
     @Inject AiStudioService studio;@Inject SecurityIdentity identity;
+    @Inject ProductSuggestionService suggestions;
     private String actor(){return identity.getPrincipal().getName();}
     @GET @Path("/status") public Object status(){return studio.status();}
     @POST @Path("/uploads") public Response upload(@NotNull @Valid AiStudioService.UploadRequest input){return Response.status(201).entity(studio.startUpload(input,actor())).build();}
     @POST @Path("/uploads/{id}/complete") public Object complete(@PathParam("id") UUID id,@Valid AiStudioService.CompleteSource input){return studio.completeUpload(id,input,actor());}
+    @POST @Path("/uploads/{id}/suggest-product") public Object suggestProduct(@PathParam("id") UUID id){return suggestions.suggest(id,actor());}
     @GET @Path("/jobs/{id}") public Object job(@PathParam("id") UUID id){return studio.job(id,actor());}
     @POST @Path("/jobs/{id}/results/{resultId}/approve") public Object approve(@PathParam("id") UUID id,@PathParam("resultId") UUID result,@NotNull @Valid AiStudioService.Review input){return studio.approve(id,result,input,actor());}
     @POST @Path("/jobs/{id}/results/{resultId}/reject") public Object reject(@PathParam("id") UUID id,@PathParam("resultId") UUID result,@NotNull @Valid AiStudioService.Review input){return studio.reject(id,result,input,actor());}
