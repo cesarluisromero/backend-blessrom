@@ -68,8 +68,11 @@ public class CatalogService {
         return Map.of("entity",collection,"products",list(false,page,size,null,null,Db.id(collection,"id")));
     }
     public Map<String,Object> categoryLanding(String slug,int page,int size) {
+        return categoryLanding(slug,page,size,"name");
+    }
+    public Map<String,Object> categoryLanding(String slug,int page,int size,String sort) {
         var category=db.one("SELECT * FROM categories WHERE slug=? AND active=true",slug);
-        return Map.of("entity",category,"products",list(false,page,size,null,Db.id(category,"id"),null));
+        return Map.of("entity",category,"products",list(false,page,size,null,Db.id(category,"id"),null,null,null,null,null,false,sort));
     }
     public List<Map<String,Object>> attributes(boolean admin) {
         String where=admin?"":" WHERE d.active=true";

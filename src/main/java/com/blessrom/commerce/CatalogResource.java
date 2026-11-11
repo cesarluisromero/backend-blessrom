@@ -16,8 +16,9 @@ public class CatalogResource {
         return catalog.collectionLanding(slug,page,size);
     }
     @GET @Path("/categories/{slug}") public Object category(@PathParam("slug") String slug,
-        @QueryParam("page") @DefaultValue("0") int page,@QueryParam("size") @DefaultValue("12") int size) {
-        return catalog.categoryLanding(slug,page,size);
+        @QueryParam("page") @DefaultValue("0") int page,@QueryParam("size") @DefaultValue("12") int size,
+        @QueryParam("sort") @DefaultValue("name") String sort) {
+        return catalog.categoryLanding(slug,page,size,sort);
     }
     @GET @Path("/attributes") public Object attributes() { return catalog.attributes(false); }
     @GET @Path("/products") public Object products(@QueryParam("page") @DefaultValue("0") int page,
