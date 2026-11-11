@@ -62,7 +62,9 @@ public class MediaService {
     public record UploadedObject(@NotBlank @Pattern(regexp="original|large|medium|thumbnail") String variant,
         @Min(1) @Max(10000) int width,@Min(1) @Max(10000) int height,@Min(1) @Max(10_485_760) long byteSize) {}
     public record CompleteUpload(@NotNull @Size(min=4,max=4) List<@NotNull @Valid UploadedObject> objects) {}
-    public record UpdateMedia(@Size(max=300) String altText,Boolean primary) {}
+    public record UpdateMedia(@Size(max=300) String altText,Boolean primary,String colorValue) {
+        public UpdateMedia(String altText,Boolean primary) { this(altText,primary,null); }
+    }
     public record MediaOrder(@NotNull @Size(min=1,max=50) List<@NotNull UUID> assetIds) {}
 
     public Map<String,Object> start(UUID productId,StartUpload input) {
@@ -214,6 +216,21 @@ public class MediaService {
         requireEditableProduct(productId);
         var current=db.one("SELECT * FROM media_assets WHERE id=? AND product_id=? AND status='READY' FOR UPDATE",assetId,productId);
         String alt=input.altText()==null?(String)current.get("alt_text"):input.altText().trim();
+        if(input.colorValue()!=null) {
+            String color=input.colorValue().isEmpty()?null:input.colorValue();
+            if(color!=null && db.rows("""
+                SELECT 1 FROM (
+                    SELECT content FROM product_drafts WHERE product_id=?
+                    UNION ALL
+                    SELECT r.content FROM products p JOIN product_revisions r ON r.id=p.published_revision WHERE p.id=?
+                ) saved
+                CROSS JOIN LATERAL jsonb_array_elements(saved.content->'variants') v
+                CROSS JOIN LATERAL jsonb_each_text(v->'attributes') a
+                WHERE lower(a.key)='color' AND a.value=? LIMIT 1
+                """,productId,productId,color).isEmpty())
+                throw new Problem(400,"INVALID_MEDIA_COLOR","Guarda primero una variante con este color.");
+            db.execute("UPDATE media_assets SET color_value=? WHERE id=?",color,assetId);
+        }
         if(Boolean.TRUE.equals(input.primary())) {
             db.execute("UPDATE media_assets SET is_primary=false WHERE product_id=? AND status='READY' AND is_primary",productId);
             db.execute("UPDATE media_assets SET alt_text=?,is_primary=true WHERE id=?",alt,assetId);

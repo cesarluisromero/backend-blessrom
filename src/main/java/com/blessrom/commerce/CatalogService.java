@@ -264,6 +264,22 @@ public class CatalogService {
         for(var item:items){item.putAll(thumbnails.getOrDefault(item.get("id"),Map.of()));if(item.get("thumbnailUrl")==null&&item.get("draft") instanceof Map<?,?> draft)item.put("thumbnailUrl",draft.get("imageUrl"));}
         return Map.of("items",items,"page",page,"size",size,"total",total);
     }
+    public Map<String,Object> publicProductDetail(UUID id) {
+        var product=publicProduct(id);
+        var colors=db.rows("""
+            SELECT DISTINCT a.value, opt.swatch
+            FROM products p JOIN product_revisions r ON r.id=p.published_revision
+            CROSS JOIN LATERAL jsonb_array_elements(r.content->'variants') v
+            CROSS JOIN LATERAL jsonb_each_text(v->'attributes') a
+            JOIN attribute_definitions d ON d.code='color'
+            JOIN attribute_options opt ON opt.attribute_id=d.id AND opt.value=a.value
+            WHERE p.id=? AND lower(a.key)='color' AND opt.swatch IS NOT NULL
+            """,id);
+        var swatches=new LinkedHashMap<String,Object>();
+        for(var color:colors) swatches.put(color.get("value").toString(),color.get("swatch"));
+        product.put("colorSwatches",swatches);
+        return product;
+    }
     public Map<String,Object> publicProduct(UUID id) {
         var p=db.one("SELECT p.*,r.content FROM products p JOIN product_revisions r ON r.id=p.published_revision WHERE p.id=? AND p.archived=false AND EXISTS (SELECT 1 FROM variants v JOIN inventory i ON i.variant_id=v.id CROSS JOIN LATERAL jsonb_array_elements(r.content->'variants') rv WHERE v.product_id=p.id AND v.sku=rv->>'sku' AND (rv->>'enabled')::boolean AND i.on_hand-i.reserved>0)",id);
         Object raw=p.remove("content");
@@ -277,7 +293,7 @@ public class CatalogService {
         p.put("content",content);return p;
     }
     private List<Map<String,Object>> publicMedia(UUID productId) {
-        var assets=db.rows("SELECT id,alt_text,is_primary FROM media_assets WHERE product_id=? AND status='READY' ORDER BY is_primary DESC,display_order,created_at",productId);
+        var assets=db.rows("SELECT id,alt_text,is_primary,color_value FROM media_assets WHERE product_id=? AND status='READY' ORDER BY is_primary DESC,display_order,created_at,id",productId);
         for(var asset:assets) {
             var urls=new LinkedHashMap<String,String>();
             for(var object:db.rows("SELECT variant,object_key FROM media_objects WHERE asset_id=? ORDER BY variant",asset.get("id")))

@@ -28,7 +28,7 @@ public class CatalogResource {
         @QueryParam("includeFacets") @DefaultValue("false") boolean includeFacets) {
         return catalog.list(false,page,size,query,category,collection,color,talla,minPrice,maxPrice,available,sort,includeFacets);
     }
-    @GET @Path("/products/{id}") public Object product(@PathParam("id") UUID id) { return catalog.publicProduct(id); }
+    @GET @Path("/products/{id}") public Object product(@PathParam("id") UUID id) { return catalog.publicProductDetail(id); }
     @GET @Path("/shipping-rates") public Object rates() { return shipping.list(false); }
 }
 
