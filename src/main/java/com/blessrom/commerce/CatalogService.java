@@ -329,15 +329,15 @@ public class CatalogService {
             ORDER BY rank,lower(r.content->>'name'),p.id LIMIT 6
             """,term,prefix,prefix,pattern,pattern);
         var ids=new LinkedHashSet<UUID>();
-        for(var row:rows){var id=(UUID)row.get("id");ids.add(id);items.add(Map.of("id",id,"name",row.get("name"),"rank",row.get("rank")));}
+        for(var row:rows){var id=(UUID)row.get("id");ids.add(id);items.add(new LinkedHashMap<>(Map.of("id",id,"name",row.get("name"),"rank",row.get("rank"))));}
         if(items.size()<6 && term.length()>=4) {
-            for(UUID id:embeddings.semanticSuggestionIds(term,6,0.40)) if(ids.add(id)) items.add(Map.of("id",id));
+            for(UUID id:embeddings.semanticSuggestionIds(term,6,0.40)) if(ids.add(id)) items.add(new LinkedHashMap<>(Map.of("id",id)));
         }
         var semanticIds=items.stream().filter(item->!item.containsKey("name")).map(item->(UUID)item.get("id")).toList();
         if(!semanticIds.isEmpty()) {
             var semanticRows=db.rows("SELECT p.id,r.content->>'name' AS name FROM products p JOIN product_revisions r ON r.id=p.published_revision WHERE p.id IN ("+String.join(",",Collections.nCopies(semanticIds.size(),"?"))+")",semanticIds.toArray());
             var names=new HashMap<UUID,String>();for(var row:semanticRows)names.put((UUID)row.get("id"),String.valueOf(row.get("name")));
-            items.replaceAll(item->item.containsKey("name")?item:Map.of("id",item.get("id"),"name",names.get(item.get("id"))));
+            items.replaceAll(item->item.containsKey("name")?item:new LinkedHashMap<>(Map.of("id",item.get("id"),"name",names.get(item.get("id")))));
         }
         items=new ArrayList<>(items.stream().limit(6).toList());
         var thumbnails=media.thumbnails(items.stream().map(item->(UUID)item.get("id")).toList());
