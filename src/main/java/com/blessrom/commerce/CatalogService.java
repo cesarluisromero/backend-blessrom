@@ -14,6 +14,7 @@ public class CatalogService {
     @Inject MediaService media;
     @Inject CatalogManagement management;
     @Inject ActivityService activity;
+    @Inject EmbeddingService embeddings;
     @org.eclipse.microprofile.config.inject.ConfigProperty(name="blessrom.payments.mercado-pago.enabled",defaultValue="false") boolean mercadoPagoEnabled;
     @org.eclipse.microprofile.config.inject.ConfigProperty(name="blessrom.payments.mercado-pago.access-token") Optional<String> mercadoPagoToken;
     @org.eclipse.microprofile.config.inject.ConfigProperty(name="blessrom.payments.mercado-pago.webhook-secret") Optional<String> mercadoPagoSecret;
@@ -301,6 +302,47 @@ public class CatalogService {
             content.put("imageUrl",urls.get("medium"));
         }
         p.put("content",content);return p;
+    }
+    public Map<String,Object> suggestions(String query) {
+        if(query==null||query.isBlank()) return Map.of("items",List.of());
+        var term=query.trim();
+        if(term.length()<2) return Map.of("items",List.of());
+        if(term.length()>100) throw new Problem(400,"INVALID_QUERY","La búsqueda admite hasta 100 caracteres.");
+        var items=new ArrayList<Map<String,Object>>();
+        var args=new ArrayList<Object>();
+        String pattern="%"+term.replace("%","\\%").replace("_","\\_")+"%";
+        String prefix=term.replace("%","\\%").replace("_","\\_")+"%";
+        var rows=db.rows("""
+            SELECT p.id,r.content->>'name' AS name,
+              CASE WHEN lower(r.content->>'name')=lower(?) THEN 0
+                   WHEN lower(r.content->>'name') LIKE lower(?) ESCAPE '\\' THEN 1
+                   WHEN EXISTS (SELECT 1 FROM variants vx WHERE vx.product_id=p.id AND lower(vx.sku) LIKE lower(?) ESCAPE '\\') THEN 2
+                   ELSE 3 END AS rank
+            FROM products p JOIN product_revisions r ON r.id=p.published_revision
+            WHERE p.archived=false AND p.deleting=false
+              AND (lower(r.content->>'name') LIKE lower(?) ESCAPE '\\'
+                   OR EXISTS (SELECT 1 FROM variants vx WHERE vx.product_id=p.id AND lower(vx.sku) LIKE lower(?) ESCAPE '\\'))
+              AND EXISTS (SELECT 1 FROM jsonb_array_elements(r.content->'variants') rv
+                          JOIN variants v ON v.product_id=p.id AND v.sku=rv->>'sku'
+                          JOIN inventory i ON i.variant_id=v.id
+                          WHERE (rv->>'enabled')::boolean AND i.on_hand-i.reserved>0)
+            ORDER BY rank,lower(r.content->>'name'),p.id LIMIT 6
+            """,term,prefix,prefix,pattern,pattern);
+        var ids=new LinkedHashSet<UUID>();
+        for(var row:rows){var id=(UUID)row.get("id");ids.add(id);items.add(Map.of("id",id,"name",row.get("name"),"rank",row.get("rank")));}
+        if(items.size()<6 && term.length()>=4) {
+            for(UUID id:embeddings.semanticSuggestionIds(term,6,0.40)) if(ids.add(id)) items.add(Map.of("id",id));
+        }
+        var semanticIds=items.stream().filter(item->!item.containsKey("name")).map(item->(UUID)item.get("id")).toList();
+        if(!semanticIds.isEmpty()) {
+            var semanticRows=db.rows("SELECT p.id,r.content->>'name' AS name FROM products p JOIN product_revisions r ON r.id=p.published_revision WHERE p.id IN ("+String.join(",",Collections.nCopies(semanticIds.size(),"?"))+")",semanticIds.toArray());
+            var names=new HashMap<UUID,String>();for(var row:semanticRows)names.put((UUID)row.get("id"),String.valueOf(row.get("name")));
+            items.replaceAll(item->item.containsKey("name")?item:Map.of("id",item.get("id"),"name",names.get(item.get("id"))));
+        }
+        items=new ArrayList<>(items.stream().limit(6).toList());
+        var thumbnails=media.thumbnails(items.stream().map(item->(UUID)item.get("id")).toList());
+        for(var item:items){var thumb=thumbnails.getOrDefault(item.get("id"),Map.of());item.put("thumbnailUrl",thumb.get("thumbnailUrl"));item.put("imageAlt",thumb.get("imageAlt"));item.remove("rank");}
+        return Map.of("items",items);
     }
     private List<Map<String,Object>> publicMedia(UUID productId) {
         var assets=db.rows("SELECT id,alt_text,is_primary,color_value FROM media_assets WHERE product_id=? AND status='READY' ORDER BY is_primary DESC,display_order,created_at,id",productId);

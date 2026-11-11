@@ -9,17 +9,24 @@ import java.net.URI;
 import java.net.http.*;
 import java.time.Duration;
 import java.util.*;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Semaphore;
+import java.util.concurrent.TimeUnit;
 
 @ApplicationScoped
 public class EmbeddingService {
     private static final Logger LOG=Logger.getLogger(EmbeddingService.class);
     @Inject Db db; @Inject Json json;
-    @ConfigProperty(name="blessrom.ai.enabled") boolean enabled;
+    @ConfigProperty(name="blessrom.ai.search.enabled",defaultValue="false") boolean enabled;
     @ConfigProperty(name="blessrom.ai.api-key") Optional<String> apiKey;
     @ConfigProperty(name="blessrom.ai.embedding-model") String model;
     @ConfigProperty(name="blessrom.ai.embedding-dimensions") int dimensions;
     @ConfigProperty(name="blessrom.ai.embeddings-endpoint") String endpoint;
     private volatile HttpClient client;
+    private final Semaphore suggestionSlots = new Semaphore(4);
+    private final Deque<Long> suggestionCalls = new ArrayDeque<>();
+    private final LinkedHashMap<String,CachedVector> suggestionVectors = new LinkedHashMap<>(16,0.75f,true);
+    private record CachedVector(long expiresAt,double[] vector) {}
 
     @Scheduled(every="${blessrom.ai.embedding-sync-every:10m}",delayed="60s",concurrentExecution=Scheduled.ConcurrentExecution.SKIP)
     void scheduledSync() {
@@ -66,20 +73,38 @@ public class EmbeddingService {
     }
 
     public List<UUID> semanticProductIds(String query,int requestedLimit) {
+        return semanticProductIds(query,requestedLimit,0.0);
+    }
+    public List<UUID> semanticSuggestionIds(String query,int requestedLimit,double minimumSimilarity) {
+        if(!configured()||query==null||query.isBlank()) return List.of();
+        synchronized(suggestionCalls) {
+            long now=System.currentTimeMillis();
+            while(!suggestionCalls.isEmpty()&&now-suggestionCalls.peekFirst()>60_000) suggestionCalls.removeFirst();
+            if(suggestionCalls.size()>=60) return List.of();
+            suggestionCalls.addLast(now);
+        }
+        if(!suggestionSlots.tryAcquire()) return List.of();
+        try {
+            return CompletableFuture.supplyAsync(() -> semanticProductIds(query,requestedLimit,minimumSimilarity))
+                .orTimeout(700,TimeUnit.MILLISECONDS).exceptionally(error -> List.of()).join();
+        } finally { suggestionSlots.release(); }
+    }
+    public List<UUID> semanticProductIds(String query,int requestedLimit,double minimumSimilarity) {
         if(!configured()||query==null||query.isBlank()) return List.of();
         long count=((Number)db.one("SELECT count(*) AS total FROM product_embeddings").get("total")).longValue();
         if(count==0) return List.of();
         try {
-            double[] vector=embeddings(List.of(query)).getFirst();
+            double[] vector=suggestionVector(query);
             int limit=Math.max(1,Math.min(requestedLimit,20));
             return db.rows("""
                 SELECT e.product_id FROM product_embeddings e
                 JOIN products p ON p.id=e.product_id
-                WHERE p.archived=false AND p.published_revision=e.revision_id
+                WHERE p.archived=false AND p.deleting=false AND p.published_revision=e.revision_id
+                  AND (1 - (e.embedding <=> CAST(? AS vector))) >= ?
                   AND EXISTS (SELECT 1 FROM variants v JOIN inventory i ON i.variant_id=v.id
                               WHERE v.product_id=p.id AND i.on_hand>i.reserved)
                 ORDER BY e.embedding <=> CAST(? AS vector) LIMIT ?
-                """,literal(vector),limit).stream().map(row->(UUID)row.get("product_id")).toList();
+                """,literal(vector),minimumSimilarity,literal(vector),limit).stream().map(row->(UUID)row.get("product_id")).toList();
         } catch(Exception error) {
             LOG.warnf("Búsqueda vectorial no disponible; se usará búsqueda local: %s",safe(error));
             return List.of();
@@ -112,6 +137,19 @@ public class EmbeddingService {
     }
 
     private boolean configured(){return enabled&&apiKey.isPresent()&&!apiKey.get().isBlank()&&dimensions==1536;}
+    private double[] suggestionVector(String query) {
+        long now=System.currentTimeMillis();
+        synchronized(suggestionVectors) {
+            var cached=suggestionVectors.get(query.toLowerCase(Locale.ROOT));
+            if(cached!=null&&cached.expiresAt()>now)return cached.vector();
+        }
+        var vector=embeddings(List.of(query)).getFirst();
+        synchronized(suggestionVectors) {
+            suggestionVectors.put(query.toLowerCase(Locale.ROOT),new CachedVector(now+600_000,vector));
+            while(suggestionVectors.size()>500)suggestionVectors.remove(suggestionVectors.keySet().iterator().next());
+        }
+        return vector;
+    }
     private void requireConfigured(){if(!configured())throw new Problem(503,"EMBEDDINGS_NOT_CONFIGURED","La indexación vectorial no está configurada.");}
     private static String literal(double[] vector){var text=new StringBuilder("[");for(int i=0;i<vector.length;i++){if(i>0)text.append(',');text.append(Double.toString(vector[i]));}return text.append(']').toString();}
     private HttpClient client(){var current=client;if(current==null)synchronized(this){current=client;if(current==null)client=current=HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();}return current;}
