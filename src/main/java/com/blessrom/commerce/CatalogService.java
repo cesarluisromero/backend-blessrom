@@ -265,7 +265,7 @@ public class CatalogService {
         return Map.of("items",items,"page",page,"size",size,"total",total);
     }
     public Map<String,Object> publicProduct(UUID id) {
-        var p=db.one("SELECT p.*,r.content FROM products p JOIN product_revisions r ON r.id=p.published_revision WHERE p.id=? AND p.archived=false",id);
+        var p=db.one("SELECT p.*,r.content FROM products p JOIN product_revisions r ON r.id=p.published_revision WHERE p.id=? AND p.archived=false AND EXISTS (SELECT 1 FROM variants v JOIN inventory i ON i.variant_id=v.id CROSS JOIN LATERAL jsonb_array_elements(r.content->'variants') rv WHERE v.product_id=p.id AND v.sku=rv->>'sku' AND (rv->>'enabled')::boolean AND i.on_hand-i.reserved>0)",id);
         Object raw=p.remove("content");
         var content=content(id,raw,true);
         var media=publicMedia(id);
