@@ -153,8 +153,9 @@ public class OrderService {
         var args=new ArrayList<Object>();
         if(query!=null&&!query.isBlank()) {
             if(query.length()>120)throw new Problem(400,"INVALID_QUERY","La búsqueda es demasiado larga.");
-            sql.append(" AND (o.order_number ILIKE ? OR o.id::text ILIKE ?)");
-            args.add("%"+query.trim()+"%");args.add("%"+query.trim()+"%");
+            sql.append(" AND (o.order_number ILIKE ? OR o.id::text ILIKE ? OR o.customer->>'recipient' ILIKE ? OR o.customer->>'email' ILIKE ? OR o.customer->>'phone' ILIKE ?)");
+            String term="%"+query.trim()+"%";
+            args.add(term);args.add(term);args.add(term);args.add(term);args.add(term);
         }
         QueryFilters.statuses(sql,args,"o.status",status,Set.of("PENDING_PAYMENT","PAYMENT_CONFIRMED","PREPARING","READY_TO_SHIP","SHIPPED","DELIVERED","CANCELLED","EXPIRED"));
         QueryFilters.statuses(sql,args,"p.status",paymentStatus,Set.of("PENDING_PROVIDER","SUBMITTED","APPROVED","REJECTED"));
