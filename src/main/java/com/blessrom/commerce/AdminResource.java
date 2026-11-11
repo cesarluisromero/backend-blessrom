@@ -48,7 +48,7 @@ public class AdminResource {
     @POST @Path("/attributes") public Response attribute(@NotNull @Valid Api.AttributeDefinition input) { return Response.status(201).entity(catalog.createAttribute(input)).build(); }
     @POST @Path("/attributes/{id}/options") public Response attributeOption(@PathParam("id") UUID id,@NotNull @Valid Api.AttributeOption input) { return Response.status(201).entity(catalog.createAttributeOption(id,input)).build(); }
     @GET @Path("/products") public Object products(@QueryParam("page") @DefaultValue("0") int page,@QueryParam("size") @DefaultValue("20") int size,
-        @QueryParam("q") String query,@QueryParam("status") String status,@QueryParam("category") UUID category,@QueryParam("collection") UUID collection) { return catalog.adminList(page,size,query,status,category,collection); }
+        @QueryParam("q") String query,@QueryParam("status") String status,@QueryParam("category") UUID category,@QueryParam("collection") UUID collection,@QueryParam("includeSubcategories") @DefaultValue("true") boolean includeSubcategories) { return catalog.adminList(page,size,query,status,category,collection,includeSubcategories); }
     @POST @Path("/products") public Response create(@NotNull @Valid Api.CreateProduct input) { return Response.status(201).entity(catalog.create(input)).build(); }
     @GET @Path("/products/{id}") public Object get(@PathParam("id") UUID id) { return catalog.adminProduct(id); }
     @PUT @Path("/products/{id}/draft") public Object edit(@PathParam("id") UUID id,@NotNull @Valid Api.UpdateDraft input) { return catalog.edit(id,input); }

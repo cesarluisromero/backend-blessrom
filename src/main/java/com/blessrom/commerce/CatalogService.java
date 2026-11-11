@@ -243,6 +243,9 @@ public class CatalogService {
         return db.rows("SELECT min("+value+") AS value,min("+value+") AS label,count(DISTINCT p.id) AS count"+facetJoin()+base.sql()+" AND "+vf.sql()+" AND nullif("+value+",'') IS NOT NULL GROUP BY lower("+value+") ORDER BY min("+value+")",args.toArray());
     }
     public Map<String,Object> adminList(int page,int size,String query,String status,UUID category,UUID collection) {
+        return adminList(page,size,query,status,category,collection,true);
+    }
+    public Map<String,Object> adminList(int page,int size,String query,String status,UUID category,UUID collection,boolean includeSubcategories) {
         validatePage(page,size);validateQuery(query);var args=new ArrayList<Object>();var sql=new StringBuilder(" WHERE true");
         if(status!=null&&!status.isBlank())switch(status) {
             case "draft" -> sql.append(" AND d.product_id IS NOT NULL AND p.archived=false");
@@ -255,7 +258,11 @@ public class CatalogService {
             sql.append(" AND (").append(content).append("->>'name' ILIKE ? OR p.slug ILIKE ? OR EXISTS(SELECT 1 FROM variants v WHERE v.product_id=p.id AND v.sku ILIKE ?))");
             for(int n=0;n<3;n++)args.add("%"+query.trim()+"%");
         }
-        appendClassification(sql,args,category,collection,content);
+        if(category!=null&&!includeSubcategories){
+            sql.append(" AND ").append(content).append("->>'categoryId'=?");
+            args.add(category.toString());
+        }
+        appendClassification(sql,args,includeSubcategories?category:null,collection,content);
         String join=" FROM products p LEFT JOIN product_revisions r ON r.id=p.published_revision LEFT JOIN product_drafts d ON d.product_id=p.id";
         long total=((Number)db.one("SELECT count(*) AS total"+join+sql,args.toArray()).get("total")).longValue();
         args.add(size);args.add(page*size);
