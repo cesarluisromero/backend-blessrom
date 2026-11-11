@@ -30,6 +30,8 @@ public class InventoryService {
     }
     public Map<String,Object> get(UUID variant) { return db.one("SELECT *,on_hand-reserved AS available FROM inventory WHERE variant_id=?",variant); }
     public Map<String,Object> adjust(UUID variant,Api.Adjustment input,String actor) {
+        var product=db.one("SELECT p.deleting FROM products p JOIN variants v ON v.product_id=p.id WHERE v.id=? FOR SHARE OF p",variant);
+        if(Boolean.TRUE.equals(product.get("deleting")))throw Problem.conflict("PRODUCT_DELETING","El producto se está eliminando.");
         var stock=db.one("SELECT * FROM inventory WHERE variant_id=? FOR UPDATE",variant);
         Problem.version(Db.version(stock),input.version());
         long next=(long)Db.integer(stock,"on_hand")+input.delta();

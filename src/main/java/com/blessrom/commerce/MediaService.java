@@ -27,6 +27,11 @@ public class MediaService {
     private static final DateTimeFormatter AMZ_DATE=DateTimeFormatter.ofPattern("yyyyMMdd'T'HHmmss'Z'").withZone(ZoneOffset.UTC);
     private static final DateTimeFormatter DATE=DateTimeFormatter.ofPattern("yyyyMMdd").withZone(ZoneOffset.UTC);
     @Inject Db db;
+    @Inject Json json;
+    @ConfigProperty(name="blessrom.media.cache-purge.enabled",defaultValue="false") boolean cachePurgeEnabled;
+    @ConfigProperty(name="blessrom.media.cache-purge.zone-id") Optional<String> cacheZone;
+    @ConfigProperty(name="blessrom.media.cache-purge.token") Optional<String> cacheToken;
+    public void requireEditableProduct(UUID id){var product=db.one("SELECT deleting FROM products WHERE id=? FOR UPDATE",id);if(Boolean.TRUE.equals(product.get("deleting")))throw Problem.conflict("PRODUCT_DELETING","El producto se está eliminando.");}
     @ConfigProperty(name="blessrom.media.r2.enabled",defaultValue="false") boolean enabled;
     @ConfigProperty(name="blessrom.media.r2.endpoint",defaultValue="https://invalid.r2.cloudflarestorage.com") String endpoint;
     @ConfigProperty(name="blessrom.media.r2.bucket",defaultValue="blessrom-media-production") String bucket;
@@ -35,6 +40,20 @@ public class MediaService {
     @ConfigProperty(name="blessrom.media.public-base-url",defaultValue="https://media.blessrom.com") String publicBaseUrl;
     @ConfigProperty(name="blessrom.media.upload-expiry-seconds",defaultValue="600") int expirySeconds;
     private volatile HttpClient client;
+
+    /** Resolve a page/cart worth of thumbnails in one query. Only published, ready media are exposed. */
+    public Map<UUID,Map<String,Object>> thumbnails(Collection<UUID> ids) {
+        if(ids.isEmpty())return Map.of();
+        var result=new HashMap<UUID,Map<String,Object>>();
+        String marks=String.join(",",Collections.nCopies(ids.size(),"?"));
+        for(var row:db.rows("SELECT p.id,r.content->>'imageUrl' AS fallback,r.content->>'name' AS name,m.object_key,m.alt_text FROM products p LEFT JOIN product_revisions r ON r.id=p.published_revision LEFT JOIN LATERAL (SELECT o.object_key,a.alt_text FROM media_assets a JOIN media_objects o ON o.asset_id=a.id AND o.variant='thumbnail' WHERE a.product_id=p.id AND a.status='READY' ORDER BY a.is_primary DESC,a.display_order,a.created_at,a.id LIMIT 1) m ON true WHERE p.id IN ("+marks+")",ids.toArray())) {
+            var item=new LinkedHashMap<String,Object>();
+            item.put("thumbnailUrl",row.get("object_key")==null?row.get("fallback"):publicUrl(row.get("object_key").toString()));
+            item.put("imageAlt",Objects.requireNonNullElse(row.get("alt_text"),Objects.requireNonNullElse(row.get("name"),"Producto Blessrom")));
+            result.put((UUID)row.get("id"),item);
+        }
+        return result;
+    }
 
     public record StartUpload(@NotBlank @Size(max=255) String filename,@Size(max=300) String altText,
         @Pattern(regexp="DESKTOP|MOBILE") String role) {
@@ -59,6 +78,7 @@ public class MediaService {
     }
 
     private Map<String,Object> startOwned(UUID productId,String pageKey,StartUpload input) {
+        if(productId!=null)requireEditableProduct(productId);
         UUID assetId=UUID.randomUUID();
         String safeName=input.filename().replaceAll("[^A-Za-z0-9._-]","_");
         db.execute("INSERT INTO media_assets(id,product_id,page_key,original_filename,alt_text,home_role) VALUES(?,?,?,?,?,?)",
@@ -69,11 +89,12 @@ public class MediaService {
             db.execute("INSERT INTO media_objects(asset_id,variant,object_key) VALUES(?,?,?)",assetId,variant,key);
             uploads.add(Map.of("variant",variant,"objectKey",key,"uploadUrl",presign("PUT",key,"image/webp"),"contentType","image/webp"));
         }
-        if(pageKey!=null)rememberUploadExpiry(assetId);
+        rememberUploadExpiry(assetId);
         return Map.of("assetId",assetId,"expiresIn",expirySeconds,"uploads",uploads);
     }
 
     public Map<String,Object> complete(UUID productId,UUID assetId,CompleteUpload input) {
+        requireEditableProduct(productId);
         requireConfigured();
         var asset=db.one("SELECT * FROM media_assets WHERE id=? AND product_id=? FOR UPDATE",assetId,productId);
         completeObjects(assetId,asset,input);
@@ -114,7 +135,7 @@ public class MediaService {
         if(rows.size()!=VARIANTS.size())throw Problem.missing();
         var uploads=new ArrayList<Map<String,Object>>();
         for(var row:rows){String key=String.valueOf(row.get("object_key"));uploads.add(Map.of("variant",String.valueOf(row.get("variant")),"objectKey",key,"uploadUrl",presign("PUT",key,"image/webp"),"contentType","image/webp"));}
-        if(home)rememberUploadExpiry(assetId);
+        rememberUploadExpiry(assetId);
         return Map.of("assetId",assetId,"uploads",uploads);
     }
 
@@ -123,6 +144,7 @@ public class MediaService {
     }
 
     public Map<String,Object> completeStagedProduct(UUID productId,UUID assetId,CompleteUpload input) {
+        requireEditableProduct(productId);
         var asset=db.one("SELECT * FROM media_assets WHERE id=? AND product_id=? FOR UPDATE",assetId,productId);
         completeObjects(assetId,asset,input);db.execute("UPDATE media_assets SET status='STAGED',ready_at=now(),is_primary=false WHERE id=?",assetId);
         return stagedAsset(assetId);
@@ -140,6 +162,8 @@ public class MediaService {
         var urls=new LinkedHashMap<String,String>();for(var object:objects)urls.put(String.valueOf(object.get("variant")),publicUrl(String.valueOf(object.get("object_key"))));
         asset.put("urls",urls);asset.put("objects",objects);return asset;
     }
+
+    public void lockProductAsset(UUID assetId){var owner=db.one("SELECT product_id FROM media_assets WHERE id=?",assetId);if(owner.get("product_id")==null)throw Problem.missing();requireEditableProduct((UUID)owner.get("product_id"));db.one("SELECT id FROM media_assets WHERE id=? AND status IN ('STAGED','READY')",assetId);}
 
     public void promoteHome(UUID assetId) {db.execute("UPDATE media_assets SET status='READY' WHERE id=? AND page_key='home' AND status='STAGED'",assetId);}
     public void resetStaged(UUID assetId) {
@@ -187,6 +211,7 @@ public class MediaService {
     }
 
     public Map<String,Object> update(UUID productId,UUID assetId,UpdateMedia input) {
+        requireEditableProduct(productId);
         var current=db.one("SELECT * FROM media_assets WHERE id=? AND product_id=? AND status='READY' FOR UPDATE",assetId,productId);
         String alt=input.altText()==null?(String)current.get("alt_text"):input.altText().trim();
         if(Boolean.TRUE.equals(input.primary())) {
@@ -197,6 +222,7 @@ public class MediaService {
     }
 
     public List<Map<String,Object>> reorder(UUID productId,MediaOrder input) {
+        requireEditableProduct(productId);
         db.one("SELECT id FROM products WHERE id=?",productId);
         var current=db.rows("SELECT id FROM media_assets WHERE product_id=? AND status='READY'",productId)
             .stream().map(row->Db.id(row,"id")).collect(java.util.stream.Collectors.toSet());
@@ -337,8 +363,18 @@ public class MediaService {
 
     @Transactional(Transactional.TxType.NOT_SUPPORTED)
     public void purgeHomeObject(String key) {
+        purgeObject(key,"storefront/home/");
+    }
+
+    @Transactional(Transactional.TxType.NOT_SUPPORTED)
+    public void purgeProductObject(String key) {
+        if(!key.startsWith("products/")&&!key.startsWith("ai-studio/originals/"))throw new IllegalArgumentException("Clave inválida");
+        purgeObject(key,key.startsWith("products/")?"products/":"ai-studio/originals/");
+    }
+
+    private void purgeObject(String key,String prefix) {
         requireConfigured();
-        if(!key.startsWith("storefront/home/"))throw new IllegalArgumentException("Clave de portada inválida");
+        if(!key.startsWith(prefix))throw new IllegalArgumentException("Clave de imagen inválida");
         try {
             var deletion=HttpRequest.newBuilder(URI.create(presign("DELETE",key,null)))
                 .DELETE().timeout(Duration.ofSeconds(15)).build();
@@ -355,6 +391,16 @@ public class MediaService {
         } catch(java.io.IOException error) {
             throw new IllegalStateException("No se pudo verificar la eliminación en R2",error);
         }
+    }
+
+    @Transactional(Transactional.TxType.NOT_SUPPORTED)
+    public void purgeCachedUrls(List<String> keys){
+        if(!cachePurgeEnabled||keys.isEmpty())return;
+        String zone=cacheZone.orElseThrow(()->new IllegalStateException("Configura el identificador de zona Cloudflare"));
+        String token=cacheToken.orElseThrow(()->new IllegalStateException("Configura el token de purga Cloudflare"));
+        if(!zone.matches("[a-fA-F0-9]{32}"))throw new IllegalStateException("Zona Cloudflare inválida");
+        var urls=keys.stream().filter(k->!k.startsWith("ai-studio/")).map(this::publicUrl).toList();
+        try{for(int i=0;i<urls.size();i+=30){var request=HttpRequest.newBuilder(URI.create("https://api.cloudflare.com/client/v4/zones/"+zone+"/purge_cache")).timeout(Duration.ofSeconds(20)).header("Authorization","Bearer "+token).header("Content-Type","application/json").POST(HttpRequest.BodyPublishers.ofString(json.write(Map.of("files",urls.subList(i,Math.min(i+30,urls.size())))))).build();var response=client().send(request,HttpResponse.BodyHandlers.ofString());if(response.statusCode()!=200||!Boolean.TRUE.equals(json.read(response.body(),Map.class).get("success")))throw new IllegalStateException("Cloudflare no confirmó la limpieza de caché");}}catch(InterruptedException e){Thread.currentThread().interrupt();throw new IllegalStateException("Purga interrumpida");}catch(java.io.IOException e){throw new IllegalStateException("No se pudo purgar la caché");}
     }
 
     private static String path(String value) { return Arrays.stream(value.split("/",-1)).map(MediaService::encode).reduce((a,b)->a+"/"+b).orElse(""); }

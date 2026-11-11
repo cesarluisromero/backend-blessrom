@@ -12,6 +12,7 @@ public class CatalogService {
     @Inject Json json;
     @Inject HomeService home;
     @Inject MediaService media;
+    @Inject CatalogManagement management;
     @Inject ActivityService activity;
     @org.eclipse.microprofile.config.inject.ConfigProperty(name="blessrom.payments.mercado-pago.enabled",defaultValue="false") boolean mercadoPagoEnabled;
     @org.eclipse.microprofile.config.inject.ConfigProperty(name="blessrom.payments.mercado-pago.access-token") Optional<String> mercadoPagoToken;
@@ -106,6 +107,7 @@ public class CatalogService {
         return adminProduct(id);
     }
     private void saveDraft(UUID productId,Api.Draft draft) {
+        management.validateAssignments(productId,draft);
         db.one("SELECT id FROM categories WHERE id=?",draft.categoryId());
         var collectionIds=draft.collectionIds()==null?List.<UUID>of():draft.collectionIds();
         if(collectionIds.size()!=new HashSet<>(collectionIds).size()) throw new Problem(400,"DUPLICATE_COLLECTION","No repitas una colección.");
@@ -143,7 +145,7 @@ public class CatalogService {
         db.execute("UPDATE products SET archived=true,version=version+1 WHERE id=?",id);
         activity.record("PRODUCT_ARCHIVED","product",id,"Producto archivado","admin");
     }
-    private Map<String,Object> lock(UUID id) { return db.one("SELECT * FROM products WHERE id=? FOR UPDATE",id); }
+    private Map<String,Object> lock(UUID id) { var row=db.one("SELECT * FROM products WHERE id=? FOR UPDATE",id);if(Boolean.TRUE.equals(row.get("deleting")))throw Problem.conflict("PRODUCT_DELETING","El producto se está eliminando.");return row; }
     public Map<String,Object> adminProduct(UUID id) {
         var product=db.one("SELECT * FROM products WHERE id=?",id);
         var draft=db.rows("SELECT content FROM product_drafts WHERE product_id=?",id);
@@ -258,6 +260,8 @@ public class CatalogService {
         long total=((Number)db.one("SELECT count(*) AS total"+join+sql,args.toArray()).get("total")).longValue();
         args.add(size);args.add(page*size);
         var items=db.rows("SELECT p.id"+join+sql+" ORDER BY lower("+content+"->>'name') NULLS LAST,p.id LIMIT ? OFFSET ?",args.toArray()).stream().map(row->adminProduct(Db.id(row,"id"))).toList();
+        var thumbnails=media.thumbnails(items.stream().map(row->(UUID)row.get("id")).toList());
+        for(var item:items){item.putAll(thumbnails.getOrDefault(item.get("id"),Map.of()));if(item.get("thumbnailUrl")==null&&item.get("draft") instanceof Map<?,?> draft)item.put("thumbnailUrl",draft.get("imageUrl"));}
         return Map.of("items",items,"page",page,"size",size,"total",total);
     }
     public Map<String,Object> publicProduct(UUID id) {

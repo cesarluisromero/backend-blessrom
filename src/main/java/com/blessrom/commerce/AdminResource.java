@@ -11,6 +11,24 @@ import java.util.*;
 @Path("/api/v1/admin") @RolesAllowed("admin") @Produces(MediaType.APPLICATION_JSON) @Consumes(MediaType.APPLICATION_JSON) @Tag(name="Administración comercial")
 public class AdminResource {
     @Inject CatalogService catalog;
+    @Inject CatalogManagement management;
+    @Inject ProductPurgeService productPurges;
+    @DELETE @Path("/products/{id}/permanent") public Response purgeProduct(@PathParam("id") UUID id,@QueryParam("version") Long version,@HeaderParam("Idempotency-Key") String key){return Response.accepted(productPurges.enqueue(id,null,requiredVersion(version),key,identity.getPrincipal().getName())).build();}
+    @GET @Path("/purges/{id}") public Object purgeStatus(@PathParam("id") UUID id){return productPurges.status(id);}
+    @POST @Path("/purges/{id}/retry") public Object retryPurge(@PathParam("id") UUID id){return productPurges.retry(id);}
+    @GET @Path("/categories/page") public Object categoryPage(@QueryParam("q") String q,@QueryParam("page") @DefaultValue("0") int page,@QueryParam("size") @DefaultValue("5") int size){return management.page("category",null,q,page,size);}
+    @GET @Path("/collections/page") public Object collectionPage(@QueryParam("q") String q,@QueryParam("page") @DefaultValue("0") int page,@QueryParam("size") @DefaultValue("5") int size){return management.page("collection",null,q,page,size);}
+    @GET @Path("/attributes/{id}/options/page") public Object optionPage(@PathParam("id") UUID id,@QueryParam("q") String q,@QueryParam("page") @DefaultValue("0") int page,@QueryParam("size") @DefaultValue("5") int size){return management.page("option",id,q,page,size);}
+    @GET @Path("/categories/{id}") public Object categoryDetail(@PathParam("id") UUID id){return management.detail("category",id);}
+    @GET @Path("/collections/{id}") public Object collectionDetail(@PathParam("id") UUID id){return management.detail("collection",id);}
+    @GET @Path("/attributes/{attribute}/options/{id}") public Object optionDetail(@PathParam("id") UUID id,@PathParam("attribute") UUID attribute){dbOption(attribute,id);return management.detail("option",id);}
+    private void dbOption(UUID attribute,UUID id){var row=management.detail("option",id);if(!attribute.equals(row.get("attribute_id")))throw Problem.missing();}
+    @PUT @Path("/categories/{id}") public Object editCategory(@PathParam("id") UUID id,@NotNull @Valid CatalogManagement.CategoryEdit input){return management.updateCategory(id,input);}
+    @PUT @Path("/attributes/{attribute}/options/{id}") public Object editOption(@PathParam("id") UUID id,@PathParam("attribute") UUID attribute,@NotNull @Valid CatalogManagement.OptionEdit input){dbOption(attribute,id);return management.updateOption(id,input);}
+    @DELETE @Path("/categories/{id}") public void deleteCategory(@PathParam("id") UUID id,@QueryParam("version") Long version){management.delete("category",id,requiredVersion(version));}
+    @DELETE @Path("/collections/{id}") public void deleteCollection(@PathParam("id") UUID id,@QueryParam("version") Long version){management.delete("collection",id,requiredVersion(version));}
+    @DELETE @Path("/attributes/{attribute}/options/{id}") public void deleteOption(@PathParam("id") UUID id,@PathParam("attribute") UUID attribute,@QueryParam("version") Long version){dbOption(attribute,id);management.delete("option",id,requiredVersion(version));}
+    private long requiredVersion(Long version){if(version==null||version<0)throw new Problem(400,"VERSION_REQUIRED","Indica la versión actual.");return version;}
     @Inject InventoryService inventory;
     @Inject ShippingService shipping;
     @Inject OrderService orders;
@@ -25,7 +43,7 @@ public class AdminResource {
     @GET @Path("/categories") public Object categories() { return catalog.adminCategories(); }
     @GET @Path("/collections") public Object collections() { return catalog.collections(true); }
     @POST @Path("/collections") public Response collection(@NotNull @Valid Api.Collection input) { return Response.status(201).entity(catalog.createCollection(input)).build(); }
-    @PUT @Path("/collections/{id}") public Object collection(@PathParam("id") UUID id,@NotNull @Valid Api.UpdateCollection input) { return catalog.updateCollection(id,input); }
+    @PUT @Path("/collections/{id}") public Object collection(@PathParam("id") UUID id,@NotNull @Valid CatalogManagement.CollectionEdit input) { return management.updateCollection(id,input); }
     @GET @Path("/attributes") public Object attributes() { return catalog.attributes(true); }
     @POST @Path("/attributes") public Response attribute(@NotNull @Valid Api.AttributeDefinition input) { return Response.status(201).entity(catalog.createAttribute(input)).build(); }
     @POST @Path("/attributes/{id}/options") public Response attributeOption(@PathParam("id") UUID id,@NotNull @Valid Api.AttributeOption input) { return Response.status(201).entity(catalog.createAttributeOption(id,input)).build(); }
@@ -49,8 +67,8 @@ public class AdminResource {
         @NotNull @Valid MediaService.UpdateMedia input) { return media.update(id,assetId,input); }
     @PUT @Path("/products/{id}/media-order") public Object orderMedia(@PathParam("id") UUID id,
         @NotNull @Valid MediaService.MediaOrder input) { return media.reorder(id,input); }
-    @DELETE @Path("/products/{id}/media/{assetId}") public void deleteMedia(@PathParam("id") UUID id,@PathParam("assetId") UUID assetId) {
-        media.delete(id,assetId);
+    @DELETE @Path("/products/{id}/media/{assetId}") public Response deleteMedia(@PathParam("id") UUID id,@PathParam("assetId") UUID assetId,@QueryParam("version") Long version,@HeaderParam("Idempotency-Key") String key) {
+        return Response.accepted(productPurges.enqueue(id,assetId,version,key==null?UUID.randomUUID().toString():key,identity.getPrincipal().getName())).build();
     }
     @GET @Path("/inventory/{id}") public Object stock(@PathParam("id") UUID id) { return inventory.get(id); }
     @GET @Path("/inventory") public Object stockList(@QueryParam("q") String query,@QueryParam("stockLevel") @DefaultValue("all") String level,
