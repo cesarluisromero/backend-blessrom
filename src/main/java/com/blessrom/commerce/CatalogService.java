@@ -277,6 +277,7 @@ public class CatalogService {
     public Map<String,Object> adminList(int page,int size,String query,String status,UUID category,UUID collection,boolean includeSubcategories) {
         validatePage(page,size);validateQuery(query);var args=new ArrayList<Object>();var sql=new StringBuilder(" WHERE true");
         if(status!=null&&!status.isBlank())switch(status) {
+            case "active" -> sql.append(" AND p.archived=false");
             case "draft" -> sql.append(" AND d.product_id IS NOT NULL AND p.archived=false");
             case "published" -> sql.append(" AND p.published_revision IS NOT NULL AND p.archived=false");
             case "archived" -> sql.append(" AND p.archived=true");
