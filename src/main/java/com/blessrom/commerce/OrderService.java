@@ -164,7 +164,7 @@ public class OrderService {
         if(paymentException)sql.append(" AND o.status IN ('EXPIRED','CANCELLED') AND p.status='APPROVED'");
         var count=db.one("SELECT count(*) AS n"+sql,args.toArray());
         var pageArgs=new ArrayList<>(args);pageArgs.add(size);pageArgs.add(page*size);
-        var items=db.rows("SELECT o.id,o.order_number AS \"orderNumber\",o.version,o.status,o.currency,o.total,o.created_at,o.reservation_expires_at,p.status AS payment_status,p.method AS payment_method"+sql+" ORDER BY o.created_at DESC,o.id DESC LIMIT ? OFFSET ?",pageArgs.toArray());
+        var items=db.rows("SELECT o.id,o.order_number AS \"orderNumber\",o.version,o.status,o.currency,o.total,o.created_at,o.reservation_expires_at,p.status AS payment_status,p.method AS payment_method,o.customer->>'recipient' AS recipient,(SELECT string_agg(oi.quantity::text || ' × ' || oi.name,' · ' ORDER BY oi.name,oi.variant_id) FROM order_items oi WHERE oi.order_id=o.id) AS \"itemSummary\""+sql+" ORDER BY o.created_at DESC,o.id DESC LIMIT ? OFFSET ?",pageArgs.toArray());
         return Map.of("items",items,"page",page,"size",size,"total",count.get("n"));
     }
     public Map<String,Object> listByCustomer(String subject,int page,int size) {
