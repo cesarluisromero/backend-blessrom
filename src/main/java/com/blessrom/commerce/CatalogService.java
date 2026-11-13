@@ -21,7 +21,10 @@ public class CatalogService {
     @org.eclipse.microprofile.config.inject.ConfigProperty(name="blessrom.payments.mercado-pago.webhook-secret") Optional<String> mercadoPagoSecret;
     @org.eclipse.microprofile.config.inject.ConfigProperty(name="blessrom.payments.manual.phone",defaultValue="926940715") Optional<String> manualPaymentPhone;
     @org.eclipse.microprofile.config.inject.ConfigProperty(name="blessrom.payments.manual.qr-url",defaultValue="/qr-blessrom.png") Optional<String> manualPaymentQrUrl;
-    public List<Map<String,Object>> categories() { return db.rows("SELECT * FROM categories WHERE active=true ORDER BY display_order,name"); }
+    private static final String SELLABLE_PRODUCT = "SELECT 1 FROM products p JOIN product_revisions r ON r.id=p.published_revision WHERE p.archived=false AND EXISTS (SELECT 1 FROM jsonb_array_elements(COALESCE(r.content->'variants','[]'::jsonb)) rv JOIN variants v ON v.product_id=p.id AND v.sku=rv->>'sku' JOIN inventory i ON i.variant_id=v.id WHERE rv->>'enabled'='true' AND i.on_hand-i.reserved>0)";
+    public List<Map<String,Object>> categories() {
+        return db.rows("SELECT c.* FROM categories c WHERE c.active=true AND EXISTS ("+SELLABLE_PRODUCT+" AND r.content->>'categoryId' IN (WITH RECURSIVE descendants AS (SELECT c.id UNION SELECT child.id FROM categories child JOIN descendants d ON child.parent_id=d.id) SELECT id::text FROM descendants)) ORDER BY c.display_order,c.name");
+    }
     public List<Map<String,Object>> adminCategories() { return db.rows("SELECT * FROM categories ORDER BY display_order,name"); }
     public Map<String,Object> createCategory(Api.Category input) {
         UUID id=UUID.randomUUID();
@@ -31,8 +34,8 @@ public class CatalogService {
         return db.one("SELECT * FROM categories WHERE id=?",id);
     }
     public List<Map<String,Object>> collections(boolean admin) {
-        String where=admin?"":" WHERE active=true AND (starts_at IS NULL OR starts_at<=now()) AND (ends_at IS NULL OR ends_at>now())";
-        return db.rows("SELECT * FROM collections"+where+" ORDER BY display_order,name");
+        if(!admin)return db.rows("SELECT c.* FROM collections c WHERE c.active=true AND (c.starts_at IS NULL OR c.starts_at<=now()) AND (c.ends_at IS NULL OR c.ends_at>now()) AND EXISTS ("+SELLABLE_PRODUCT+" AND COALESCE(r.content->'collectionIds','[]'::jsonb) @> jsonb_build_array(c.id::text)) ORDER BY c.display_order,c.name");
+        return db.rows("SELECT * FROM collections ORDER BY display_order,name");
     }
     public Map<String,Object> createCollection(Api.Collection input) {
         if(input.startsAt()!=null&&input.endsAt()!=null&&!input.endsAt().isAfter(input.startsAt()))
