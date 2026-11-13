@@ -19,6 +19,8 @@ public class CatalogService {
     @org.eclipse.microprofile.config.inject.ConfigProperty(name="blessrom.payments.mercado-pago.enabled",defaultValue="false") boolean mercadoPagoEnabled;
     @org.eclipse.microprofile.config.inject.ConfigProperty(name="blessrom.payments.mercado-pago.access-token") Optional<String> mercadoPagoToken;
     @org.eclipse.microprofile.config.inject.ConfigProperty(name="blessrom.payments.mercado-pago.webhook-secret") Optional<String> mercadoPagoSecret;
+    @org.eclipse.microprofile.config.inject.ConfigProperty(name="blessrom.payments.manual.phone",defaultValue="926940715") Optional<String> manualPaymentPhone;
+    @org.eclipse.microprofile.config.inject.ConfigProperty(name="blessrom.payments.manual.qr-url",defaultValue="/qr-blessrom.png") Optional<String> manualPaymentQrUrl;
     public List<Map<String,Object>> categories() { return db.rows("SELECT * FROM categories WHERE active=true ORDER BY display_order,name"); }
     public List<Map<String,Object>> adminCategories() { return db.rows("SELECT * FROM categories ORDER BY display_order,name"); }
     public Map<String,Object> createCategory(Api.Category input) {
@@ -60,9 +62,12 @@ public class CatalogService {
         var result=new LinkedHashMap<String,Object>();
         result.put("featuredCollections",featured.stream().filter(c->!((List<?>)c.get("products")).isEmpty()).toList());
         result.put("home",home.publicHome());
-        var methods=new ArrayList<String>(List.of("YAPE","PLIN","BANK_TRANSFER","CASH_ON_DELIVERY"));
+        var methods=new ArrayList<String>();
+        var manualReady=manualPaymentPhone.filter(s->!s.isBlank()).isPresent()&&manualPaymentQrUrl.filter(s->!s.isBlank()).isPresent();
+        if(manualReady){methods.add("YAPE");methods.add("PLIN");}
         if(mercadoPagoEnabled&&mercadoPagoToken.filter(s->!s.isBlank()).isPresent()&&mercadoPagoSecret.filter(s->!s.isBlank()).isPresent())methods.addFirst("MERCADO_PAGO");
         result.put("paymentMethods",methods);
+        if(manualReady)result.put("manualPayment",Map.of("phone",manualPaymentPhone.get(),"qrUrl",manualPaymentQrUrl.get(),"accountName","Blessrom"));
         return result;
     }
     public Map<String,Object> collectionLanding(String slug,int page,int size) {
