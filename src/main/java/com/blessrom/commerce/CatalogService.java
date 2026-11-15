@@ -310,20 +310,7 @@ public class CatalogService {
         return Map.of("items",items,"page",page,"size",size,"total",total);
     }
     public Map<String,Object> publicProductDetail(UUID id) {
-        var product=publicProduct(id);
-        var colors=db.rows("""
-            SELECT DISTINCT a.value, opt.swatch
-            FROM products p JOIN product_revisions r ON r.id=p.published_revision
-            CROSS JOIN LATERAL jsonb_array_elements(r.content->'variants') v
-            CROSS JOIN LATERAL jsonb_each_text(v->'attributes') a
-            JOIN attribute_definitions d ON d.code='color'
-            JOIN attribute_options opt ON opt.attribute_id=d.id AND opt.value=a.value
-            WHERE p.id=? AND lower(a.key)='color' AND opt.swatch IS NOT NULL
-            """,id);
-        var swatches=new LinkedHashMap<String,Object>();
-        for(var color:colors) swatches.put(color.get("value").toString(),color.get("swatch"));
-        product.put("colorSwatches",swatches);
-        return product;
+        return publicProduct(id);
     }
     public Map<String,Object> publicProduct(UUID id) {
         var p=db.one("SELECT p.*,r.content FROM products p JOIN product_revisions r ON r.id=p.published_revision WHERE p.id=? AND p.archived=false AND EXISTS (SELECT 1 FROM variants v JOIN inventory i ON i.variant_id=v.id CROSS JOIN LATERAL jsonb_array_elements(r.content->'variants') rv WHERE v.product_id=p.id AND v.sku=rv->>'sku' AND (rv->>'enabled')::boolean AND i.on_hand-i.reserved>0)",id);
@@ -335,6 +322,19 @@ public class CatalogService {
             @SuppressWarnings("unchecked") var urls=(Map<String,String>)media.getFirst().get("urls");
             content.put("imageUrl",urls.get("medium"));
         }
+        var colors=db.rows("""
+            SELECT DISTINCT a.value, opt.swatch
+            FROM products p JOIN product_revisions r ON r.id=p.published_revision
+            CROSS JOIN LATERAL jsonb_array_elements(r.content->'variants') v
+            CROSS JOIN LATERAL jsonb_each_text(v->'attributes') a
+            JOIN attribute_definitions d ON lower(d.code)='color'
+            JOIN attribute_options opt ON opt.attribute_id=d.id
+              AND (lower(btrim(opt.value))=lower(btrim(a.value)) OR lower(btrim(opt.label))=lower(btrim(a.value)))
+            WHERE p.id=? AND lower(a.key)='color' AND opt.swatch IS NOT NULL
+            """,id);
+        var swatches=new LinkedHashMap<String,Object>();
+        for(var color:colors) swatches.put(color.get("value").toString(),color.get("swatch"));
+        p.put("colorSwatches",swatches);
         p.put("content",content);return p;
     }
     public Map<String,Object> suggestions(String query) {
