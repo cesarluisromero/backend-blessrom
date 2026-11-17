@@ -17,9 +17,10 @@ public class HomeSectionsResource {
     @Inject Db db;
     @Inject Json json;
     @Inject CatalogService catalog;
+    @Inject MediaService media;
 
     @RegisterForReflection public record Section(UUID id,String title,String kind,UUID sourceId,int limit,boolean enabled,
-        String presentation,Integer visibleCount,Boolean autoRotate) {}
+        String presentation,Integer visibleCount,Boolean autoRotate,UUID desktopAssetId,UUID mobileAssetId) {}
     @RegisterForReflection public record Save(long version,List<Section> sections) {}
     @RegisterForReflection public record Version(long version) {}
 
@@ -45,12 +46,16 @@ public class HomeSectionsResource {
                 UUID collection="COLLECTION".equals(section.kind())?section.sourceId():null;
                 products=(List<?>)catalog.list(false,0,limit,null,category,collection,null,null,null,null,true,"newest").get("items");
             }
-            if(!products.isEmpty()) {
+            if(!products.isEmpty()&&(!"VISUAL".equals(presentation)||section.desktopAssetId()!=null&&section.mobileAssetId()!=null)) {
                 var item=new LinkedHashMap<String,Object>();
                 item.put("id",section.id());item.put("title",section.title());item.put("kind",section.kind());
                 item.put("presentation",presentation);item.put("visibleCount",section.visibleCount()==null?4:section.visibleCount());
                 item.put("autoRotate",section.autoRotate()==null||section.autoRotate());
                 item.put("sourceSlug",sourceSlug);item.put("products",products);
+                if("VISUAL".equals(presentation)) {
+                    item.put("desktopMedia",media.homeAsset(section.desktopAssetId()));
+                    item.put("mobileMedia",media.homeAsset(section.mobileAssetId()));
+                }
                 result.add(item);
             }
         }
@@ -60,7 +65,12 @@ public class HomeSectionsResource {
     @GET @Path("/admin") @RolesAllowed("admin")
     public Map<String,Object> admin() {
         var row=db.one("SELECT version,draft,published FROM home_product_sections WHERE id=1");
-        return Map.of("version",row.get("version"),"draft",read(row.get("draft")),"published",read(row.get("published")));
+        var draft=read(row.get("draft"));var published=read(row.get("published"));
+        var assets=new LinkedHashMap<String,Object>();
+        for(var section:both(draft,published))for(var id:Arrays.asList(section.desktopAssetId(),section.mobileAssetId())) {
+            if(id!=null&&!assets.containsKey(id.toString()))assets.put(id.toString(),media.homeAsset(id));
+        }
+        return Map.of("version",row.get("version"),"draft",draft,"published",published,"media",assets);
     }
 
     @PUT @Path("/admin/draft") @RolesAllowed("admin")
@@ -84,6 +94,12 @@ public class HomeSectionsResource {
             String table="CATEGORY".equals(section.kind())?"categories":"collections";
             if(db.rows("SELECT id FROM "+table+" WHERE id=? AND active=true",section.sourceId()).isEmpty())
                 throw new Problem(400,"SECTION_SOURCE_UNAVAILABLE","Una sección usa una categoría o colección inactiva.");
+            if("VISUAL".equals(section.presentation())) {
+                if(section.desktopAssetId()==null||section.mobileAssetId()==null)
+                    throw new Problem(400,"SECTION_IMAGES_REQUIRED","La portada visual necesita imágenes para PC y móvil.");
+                requireSectionMedia(section.desktopAssetId(),"DESKTOP",2160,720);
+                requireSectionMedia(section.mobileAssetId(),"MOBILE",1024,1280);
+            }
         }
         db.execute("UPDATE home_product_sections SET published=draft,version=version+1,updated_at=now() WHERE id=1");
         return admin();
@@ -108,6 +124,15 @@ public class HomeSectionsResource {
     }
 
     private List<Section> read(Object value) { return Arrays.asList(json.read(value,Section[].class)); }
+    private void requireSectionMedia(UUID assetId,String role,int width,int height) {
+        media.requireHomeRole(assetId,role);
+        var object=db.one("SELECT o.width,o.height FROM media_objects o WHERE o.asset_id=? AND o.variant='original'",assetId);
+        if(Db.integer(object,"width")!=width||Db.integer(object,"height")!=height)
+            throw new Problem(400,"SECTION_IMAGE_SIZE_INVALID","La imagen no tiene las medidas requeridas para "+role+".");
+    }
+    private static List<Section> both(List<Section> draft,List<Section> published) {
+        var result=new ArrayList<Section>(draft);result.addAll(published);return result;
+    }
     private static void validate(List<Section> sections) {
         if(sections==null||sections.size()>8)throw new Problem(400,"INVALID_HOME_SECTIONS","El inicio admite hasta ocho secciones.");
         var ids=new HashSet<UUID>();
@@ -119,7 +144,8 @@ public class HomeSectionsResource {
                 ||("BEST_SELLERS".equals(section.kind())?section.sourceId()!=null:section.sourceId()==null)
                 ||(section.presentation()!=null&&!Set.of("GRID","CAROUSEL","VISUAL").contains(section.presentation()))
                 ||(section.visibleCount()!=null&&section.visibleCount()!=3&&section.visibleCount()!=4)
-                ||("VISUAL".equals(section.presentation())&&"BEST_SELLERS".equals(section.kind())))
+                ||("VISUAL".equals(section.presentation())&&"BEST_SELLERS".equals(section.kind()))
+                ||section.desktopAssetId()!=null&&section.desktopAssetId().equals(section.mobileAssetId()))
                 throw new Problem(400,"INVALID_HOME_SECTION","Revisa el título, el criterio y la cantidad de cada sección.");
         }
     }
