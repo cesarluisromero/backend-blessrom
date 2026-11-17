@@ -21,11 +21,11 @@ public class HomeService {
     @RegisterForReflection
     public record Target(@NotBlank @Pattern(regexp="catalog|category|collection|collections") String type, UUID id) {}
     @RegisterForReflection
-    public record Action(@NotBlank @Size(max=80) String label, @NotNull @Valid Target target) {}
+    public record Action(@NotNull @Size(max=80) String label, @NotNull @Valid Target target) {}
     @RegisterForReflection
     public record HomeSlide(
         @NotNull @Size(max=100) String eyebrow,
-        @NotBlank @Size(max=180) String title,
+        @NotNull @Size(max=180) String title,
         @NotNull @Size(max=1000) String description,
         UUID heroAssetId,
         @NotNull @Size(max=300) String heroAlt,
@@ -38,7 +38,7 @@ public class HomeService {
     @RegisterForReflection
     public record HomeContent(
         @NotNull @Size(max=100) String eyebrow,
-        @NotBlank @Size(max=180) String title,
+        @NotNull @Size(max=180) String title,
         @NotNull @Size(max=1000) String description,
         UUID heroAssetId,
         @NotNull @Size(max=300) String heroAlt,
@@ -200,6 +200,7 @@ public class HomeService {
         if(content.secondary()!=null)actions.add(content.secondary());actions.addAll(content.shortcuts());
         for(var slide:slides(content)){actions.add(slide.primary());if(slide.secondary()!=null)actions.add(slide.secondary());}
         for(var action:actions) {
+            if(action.label().isBlank())continue;
             var target=action.target();
             if("category".equals(target.type())) {
                 if(db.rows("SELECT id FROM categories WHERE id=? AND active=true FOR SHARE",target.id()).isEmpty())
@@ -213,7 +214,7 @@ public class HomeService {
     }
 
     private static void validateSlide(HomeSlide slide) {
-        if(slide==null||slide.title()==null||slide.title().isBlank()||slide.title().length()>180||slide.eyebrow()==null||slide.eyebrow().length()>100
+        if(slide==null||slide.title()==null||slide.title().length()>180||slide.eyebrow()==null||slide.eyebrow().length()>100
             ||slide.description()==null||slide.description().length()>1000||slide.heroAlt()==null||slide.heroAlt().length()>300
             ||!Double.isFinite(slide.frameX())||!Double.isFinite(slide.frameY())||slide.frameX()<0||slide.frameX()>100||slide.frameY()<0||slide.frameY()>100||slide.primary()==null)
             throw new Problem(400,"INVALID_HOME_SLIDE","Revisa los textos, la imagen y el encuadre de cada diapositiva.");
@@ -222,7 +223,7 @@ public class HomeService {
     }
 
     private static void validateAction(Action action) {
-        if(action==null||action.label()==null||action.label().isBlank()||action.label().length()>80||action.target()==null)
+        if(action==null||action.label()==null||action.label().length()>80||action.target()==null)
             throw new Problem(400,"INVALID_HOME_ACTION","Cada acceso necesita un texto y un destino.");
         var target=action.target();
         if(target.type()==null||!Set.of("catalog","category","collection","collections").contains(target.type())
@@ -231,7 +232,7 @@ public class HomeService {
     }
 
     static void validateStructure(HomeContent content) {
-        if(content==null||content.title()==null||content.title().isBlank()||content.title().length()>180||content.eyebrow()==null||content.eyebrow().length()>100
+        if(content==null||content.title()==null||content.title().length()>180||content.eyebrow()==null||content.eyebrow().length()>100
             ||content.description()==null||content.description().length()>1000||content.heroAlt()==null||content.heroAlt().length()>300
             ||!Double.isFinite(content.frameX())||!Double.isFinite(content.frameY())||content.frameX()<0||content.frameX()>100||content.frameY()<0||content.frameY()>100
             ||content.shortcuts()==null||content.shortcuts().size()>6||content.primary()==null)
@@ -243,5 +244,7 @@ public class HomeService {
         for(var action:actions) {
             validateAction(action);
         }
+        for(var shortcut:content.shortcuts())if(shortcut.label().isBlank())
+            throw new Problem(400,"INVALID_HOME_ACTION","Cada acceso rápido necesita un texto.");
     }
 }
