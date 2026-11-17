@@ -18,7 +18,8 @@ public class HomeSectionsResource {
     @Inject Json json;
     @Inject CatalogService catalog;
 
-    @RegisterForReflection public record Section(UUID id,String title,String kind,UUID sourceId,int limit,boolean enabled) {}
+    @RegisterForReflection public record Section(UUID id,String title,String kind,UUID sourceId,int limit,boolean enabled,
+        String presentation,Integer visibleCount,Boolean autoRotate) {}
     @RegisterForReflection public record Save(long version,List<Section> sections) {}
     @RegisterForReflection public record Version(long version) {}
 
@@ -28,14 +29,30 @@ public class HomeSectionsResource {
         var result=new ArrayList<Map<String,Object>>();
         for(var section:sections) {
             if(!section.enabled())continue;
+            String presentation=section.presentation()==null?"GRID":section.presentation();
+            String sourceSlug=null;
+            if(section.sourceId()!=null) {
+                String table="CATEGORY".equals(section.kind())?"categories":"collections";
+                var source=db.rows("SELECT slug FROM "+table+" WHERE id=? AND active=true",section.sourceId());
+                if(source.isEmpty())continue;
+                sourceSlug=source.getFirst().get("slug").toString();
+            }
             List<?> products;
-            if("BEST_SELLERS".equals(section.kind())) products=bestSellers(section.limit());
+            int limit="VISUAL".equals(presentation)?Math.min(section.limit(),3):section.limit();
+            if("BEST_SELLERS".equals(section.kind())) products=bestSellers(limit);
             else {
                 UUID category="CATEGORY".equals(section.kind())?section.sourceId():null;
                 UUID collection="COLLECTION".equals(section.kind())?section.sourceId():null;
-                products=(List<?>)catalog.list(false,0,section.limit(),null,category,collection,null,null,null,null,true,"newest").get("items");
+                products=(List<?>)catalog.list(false,0,limit,null,category,collection,null,null,null,null,true,"newest").get("items");
             }
-            if(!products.isEmpty())result.add(Map.of("id",section.id(),"title",section.title(),"kind",section.kind(),"products",products));
+            if(!products.isEmpty()) {
+                var item=new LinkedHashMap<String,Object>();
+                item.put("id",section.id());item.put("title",section.title());item.put("kind",section.kind());
+                item.put("presentation",presentation);item.put("visibleCount",section.visibleCount()==null?4:section.visibleCount());
+                item.put("autoRotate",section.autoRotate()==null||section.autoRotate());
+                item.put("sourceSlug",sourceSlug);item.put("products",products);
+                result.add(item);
+            }
         }
         return result;
     }
@@ -96,9 +113,13 @@ public class HomeSectionsResource {
         var ids=new HashSet<UUID>();
         for(var section:sections) {
             if(section==null||section.id()==null||!ids.add(section.id())||section.title()==null||section.title().isBlank()
-                ||section.title().length()>100||section.limit()<1||section.limit()>12
+                ||section.title().length()>100||section.limit()<1||section.limit()>24
+                ||("VISUAL".equals(section.presentation())&&section.limit()>3)
                 ||section.kind()==null||!Set.of("CATEGORY","COLLECTION","BEST_SELLERS").contains(section.kind())
-                ||("BEST_SELLERS".equals(section.kind())?section.sourceId()!=null:section.sourceId()==null))
+                ||("BEST_SELLERS".equals(section.kind())?section.sourceId()!=null:section.sourceId()==null)
+                ||(section.presentation()!=null&&!Set.of("GRID","CAROUSEL","VISUAL").contains(section.presentation()))
+                ||(section.visibleCount()!=null&&section.visibleCount()!=3&&section.visibleCount()!=4)
+                ||("VISUAL".equals(section.presentation())&&"BEST_SELLERS".equals(section.kind())))
                 throw new Problem(400,"INVALID_HOME_SECTION","Revisa el título, el criterio y la cantidad de cada sección.");
         }
     }
