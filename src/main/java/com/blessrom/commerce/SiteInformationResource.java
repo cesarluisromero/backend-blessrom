@@ -20,7 +20,7 @@ public class SiteInformationResource {
     @Inject Json json;
 
     @RegisterForReflection public record Page(String title, String body) {}
-    @RegisterForReflection public record Content(String address, List<String> phones, Map<String,Page> pages) {}
+    @RegisterForReflection public record Content(String address, List<String> phones, Map<String,Page> pages, String contactBody) {}
     @RegisterForReflection public record Save(long version, Content content) {}
     @RegisterForReflection public record Version(long version) {}
     private static final Set<String> PAGE_KEYS=Set.of("quienes-somos","privacidad","terminos","eliminar-datos");
@@ -57,7 +57,8 @@ public class SiteInformationResource {
     }
 
     private static void validate(Content content) {
-        if(content==null||content.address()==null||content.address().length()>300||content.phones()==null
+        if(content==null||content.address()==null||content.address().length()>300
+            ||(content.contactBody()!=null&&content.contactBody().length()>20000)||content.phones()==null
             ||content.phones().size()>5||content.phones().stream().anyMatch(p->p==null||!p.matches("[+0-9 ()-]{0,30}"))
             ||content.pages()==null||!content.pages().keySet().equals(PAGE_KEYS)
             ||content.pages().values().stream().anyMatch(p->p==null||p.title()==null||p.title().isBlank()
