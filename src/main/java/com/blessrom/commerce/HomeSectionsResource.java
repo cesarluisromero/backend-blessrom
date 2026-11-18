@@ -20,7 +20,7 @@ public class HomeSectionsResource {
     @Inject MediaService media;
 
     @RegisterForReflection public record Section(UUID id,String title,String kind,UUID sourceId,int limit,boolean enabled,
-        String presentation,Integer visibleCount,Boolean autoRotate,UUID desktopAssetId,UUID mobileAssetId) {}
+        String presentation,Integer visibleCount,Boolean autoRotate,UUID desktopAssetId,UUID mobileAssetId,String ctaLabel) {}
     @RegisterForReflection public record Save(long version,List<Section> sections) {}
     @RegisterForReflection public record Version(long version) {}
 
@@ -55,6 +55,9 @@ public class HomeSectionsResource {
                 if("VISUAL".equals(presentation)) {
                     item.put("desktopMedia",media.homeAsset(section.desktopAssetId()));
                     item.put("mobileMedia",media.homeAsset(section.mobileAssetId()));
+                    item.put("ctaLabel",section.ctaLabel()==null||section.ctaLabel().isBlank()
+                        ? "CATEGORY".equals(section.kind())?"Ver categoría":"Ver colección"
+                        : section.ctaLabel().trim());
                 }
                 result.add(item);
             }
@@ -145,6 +148,7 @@ public class HomeSectionsResource {
                 ||(section.presentation()!=null&&!Set.of("GRID","CAROUSEL","VISUAL").contains(section.presentation()))
                 ||(section.visibleCount()!=null&&section.visibleCount()!=3&&section.visibleCount()!=4)
                 ||("VISUAL".equals(section.presentation())&&"BEST_SELLERS".equals(section.kind()))
+                ||(section.ctaLabel()!=null&&section.ctaLabel().trim().length()>60)
                 ||section.desktopAssetId()!=null&&section.desktopAssetId().equals(section.mobileAssetId()))
                 throw new Problem(400,"INVALID_HOME_SECTION","Revisa el título, el criterio y la cantidad de cada sección.");
         }
