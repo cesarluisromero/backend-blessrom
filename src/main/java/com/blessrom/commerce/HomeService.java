@@ -34,7 +34,15 @@ public class HomeService {
         @NotNull @Valid Action primary,
         @Valid Action secondary,
         UUID mobileAssetId,
-        Boolean enabled) {}
+        Boolean enabled,
+        Boolean overlayEnabled,
+        String overlayColor,
+        Integer overlayOpacity,
+        Integer overlayCoverage) {
+        public HomeSlide(String eyebrow,String title,String description,UUID heroAssetId,String heroAlt,double frameX,double frameY,Action primary,Action secondary,UUID mobileAssetId,Boolean enabled) {
+            this(eyebrow,title,description,heroAssetId,heroAlt,frameX,frameY,primary,secondary,mobileAssetId,enabled,null,null,null,null);
+        }
+    }
     @RegisterForReflection
     public record HomeContent(
         @NotNull @Size(max=100) String eyebrow,
@@ -222,7 +230,10 @@ public class HomeService {
     private static void validateSlide(HomeSlide slide) {
         if(slide==null||slide.title()==null||slide.title().length()>180||slide.eyebrow()==null||slide.eyebrow().length()>100
             ||slide.description()==null||slide.description().length()>1000||slide.heroAlt()==null||slide.heroAlt().length()>300
-            ||!Double.isFinite(slide.frameX())||!Double.isFinite(slide.frameY())||slide.frameX()<0||slide.frameX()>100||slide.frameY()<0||slide.frameY()>100||slide.primary()==null)
+            ||!Double.isFinite(slide.frameX())||!Double.isFinite(slide.frameY())||slide.frameX()<0||slide.frameX()>100||slide.frameY()<0||slide.frameY()>100||slide.primary()==null
+            ||(slide.overlayColor()!=null&&!slide.overlayColor().matches("#[0-9a-fA-F]{6}"))
+            ||(slide.overlayOpacity()!=null&&(slide.overlayOpacity()<0||slide.overlayOpacity()>100))
+            ||(slide.overlayCoverage()!=null&&(slide.overlayCoverage()<20||slide.overlayCoverage()>100)))
             throw new Problem(400,"INVALID_HOME_SLIDE","Revisa los textos, la imagen y el encuadre de cada diapositiva.");
         if(slide.heroAssetId()!=null&&slide.heroAlt().isBlank())throw new Problem(400,"HOME_IMAGE_ALT_REQUIRED","Describe cada imagen de portada para lectores de pantalla.");
         validateAction(slide.primary());if(slide.secondary()!=null)validateAction(slide.secondary());
