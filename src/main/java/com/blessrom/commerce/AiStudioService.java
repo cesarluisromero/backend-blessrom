@@ -143,7 +143,7 @@ public class AiStudioService {
             slides.add(new HomeService.HomeSlide(text(copy,"eyebrow"),text(copy,"title"),text(copy,"description"),desktop,"Portada de "+text(copy,"title"),50,50,new HomeService.Action(text(copy,"buttonLabel"),new HomeService.Target("catalog",null)),null,mobile,true));
         }
         if(slides.size()>6)throw Problem.conflict("HOME_SLIDE_LIMIT","La portada admite como máximo seis diapositivas.");
-        HomeService.HomeSlide first=slides.getFirst();HomeService.HomeContent content=new HomeService.HomeContent(first.eyebrow(),first.title(),first.description(),first.heroAssetId(),first.heroAlt(),first.frameX(),first.frameY(),first.primary(),first.secondary(),current==null?List.of():current.shortcuts(),slides);
+        HomeService.HomeSlide first=slides.getFirst();HomeService.HomeContent content=new HomeService.HomeContent(first.eyebrow(),first.title(),first.description(),first.heroAssetId(),first.heroAlt(),first.frameX(),first.frameY(),first.primary(),first.secondary(),current==null?List.of():current.shortcuts(),slides,current==null?null:current.slideIntervalSeconds(),current==null?null:current.slideTransition());
         var saved=home.saveDraft(new HomeService.SaveDraft(input.homeVersion(),content),actor);for(var result:results)db.execute("UPDATE ai_studio_results SET status='APPLIED',updated_at=now() WHERE id=?",result.get("id"));db.execute("UPDATE ai_studio_jobs SET status='APPLIED',updated_at=now() WHERE id=?",jobId);
         return saved;
     }

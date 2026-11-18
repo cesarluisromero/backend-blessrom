@@ -47,10 +47,15 @@ public class HomeService {
         @NotNull @Valid Action primary,
         @Valid Action secondary,
         @NotNull @Size(max=6) List<@NotNull @Valid Action> shortcuts,
-        @Size(max=6) List<@NotNull @Valid HomeSlide> slides) {
+        @Size(max=6) List<@NotNull @Valid HomeSlide> slides,
+        Integer slideIntervalSeconds,
+        String slideTransition) {
         /** Keeps already stored revisions and older clients readable during the additive rollout. */
         public HomeContent(String eyebrow,String title,String description,UUID heroAssetId,String heroAlt,double frameX,double frameY,Action primary,Action secondary,List<Action> shortcuts) {
-            this(eyebrow,title,description,heroAssetId,heroAlt,frameX,frameY,primary,secondary,shortcuts,null);
+            this(eyebrow,title,description,heroAssetId,heroAlt,frameX,frameY,primary,secondary,shortcuts,null,null,null);
+        }
+        public HomeContent(String eyebrow,String title,String description,UUID heroAssetId,String heroAlt,double frameX,double frameY,Action primary,Action secondary,List<Action> shortcuts,List<HomeSlide> slides) {
+            this(eyebrow,title,description,heroAssetId,heroAlt,frameX,frameY,primary,secondary,shortcuts,slides,null,null);
         }
     }
     @RegisterForReflection
@@ -128,7 +133,8 @@ public class HomeService {
 
         HomeSlide first=remaining.getFirst();
         var content=new HomeContent(first.eyebrow(),first.title(),first.description(),first.heroAssetId(),first.heroAlt(),
-            first.frameX(),first.frameY(),first.primary(),first.secondary(),published.shortcuts(),List.copyOf(remaining));
+            first.frameX(),first.frameY(),first.primary(),first.secondary(),published.shortcuts(),List.copyOf(remaining),
+            published.slideIntervalSeconds(),published.slideTransition());
         return new SlideRemoval(content,Set.copyOf(assets));
     }
 
@@ -235,7 +241,9 @@ public class HomeService {
         if(content==null||content.title()==null||content.title().length()>180||content.eyebrow()==null||content.eyebrow().length()>100
             ||content.description()==null||content.description().length()>1000||content.heroAlt()==null||content.heroAlt().length()>300
             ||!Double.isFinite(content.frameX())||!Double.isFinite(content.frameY())||content.frameX()<0||content.frameX()>100||content.frameY()<0||content.frameY()>100
-            ||content.shortcuts()==null||content.shortcuts().size()>6||content.primary()==null)
+            ||content.shortcuts()==null||content.shortcuts().size()>6||content.primary()==null
+            ||(content.slideIntervalSeconds()!=null&&(content.slideIntervalSeconds()<3||content.slideIntervalSeconds()>30))
+            ||(content.slideTransition()!=null&&!Set.of("FADE","SLIDE","ZOOM").contains(content.slideTransition())))
             throw new Problem(400,"INVALID_HOME_CONTENT","Revisa los textos, los accesos y el encuadre de la portada.");
         if(content.heroAssetId()!=null&&content.heroAlt().isBlank())
             throw new Problem(400,"HOME_IMAGE_ALT_REQUIRED","Describe la imagen de portada para lectores de pantalla.");
