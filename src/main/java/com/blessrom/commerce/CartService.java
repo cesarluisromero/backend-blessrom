@@ -54,11 +54,22 @@ public class CartService {
     }
     List<Map<String,Object>> lines(UUID id,boolean strict) {
         var rows=db.rows("SELECT ci.variant_id,ci.quantity,v.sku,p.id AS product_id,p.archived,p.published_revision,r.content,i.on_hand-i.reserved AS available FROM cart_items ci JOIN variants v ON v.id=ci.variant_id JOIN products p ON p.id=v.product_id LEFT JOIN product_revisions r ON r.id=p.published_revision JOIN inventory i ON i.variant_id=v.id WHERE ci.cart_id=? ORDER BY ci.variant_id",id);
-        var thumbnails=media.thumbnails(rows.stream().map(row->(UUID)row.get("product_id")).distinct().toList());
+        var variantProducts=new LinkedHashMap<UUID,UUID>();
+        var variantColors=new HashMap<UUID,String>();
+        for(var row:rows) {
+            UUID variantId=(UUID)row.get("variant_id");
+            variantProducts.put(variantId,(UUID)row.get("product_id"));
+            if(row.get("content")!=null) {
+                var draft=json.read(row.get("content"),Api.Draft.class);
+                draft.variants().stream().filter(v->Objects.equals(v.sku(),row.get("sku"))).findFirst().ifPresent(v->
+                    v.attributes().forEach((key,value)->{if("color".equalsIgnoreCase(key))variantColors.put(variantId,value);}));
+            }
+        }
+        var thumbnails=media.cartThumbnails(variantProducts,variantColors);
         var result=new ArrayList<Map<String,Object>>();
         for(var row:rows) {
             var line=new LinkedHashMap<String,Object>();
-            line.put("productId",row.get("product_id"));line.putAll(thumbnails.getOrDefault(row.get("product_id"),Map.of()));
+            line.put("productId",row.get("product_id"));line.putAll(thumbnails.getOrDefault(row.get("variant_id"),Map.of()));
             line.put("variantId",row.get("variant_id"));line.put("sku",row.get("sku"));line.put("quantity",row.get("quantity"));
             try {
                 var variant=enabled(row);var draft=json.read(row.get("content"),Api.Draft.class);

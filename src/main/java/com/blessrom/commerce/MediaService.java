@@ -55,6 +55,29 @@ public class MediaService {
         return result;
     }
 
+    /** Cart images follow the selected variant's color gallery. */
+    public Map<UUID,Map<String,Object>> cartThumbnails(Map<UUID,UUID> productsByVariant,Map<UUID,String> colorsByVariant) {
+        if(productsByVariant.isEmpty())return Map.of();
+        var productIds=new HashSet<>(productsByVariant.values());
+        String marks=String.join(",",Collections.nCopies(productIds.size(),"?"));
+        var rows=db.rows("SELECT p.id AS product_id,r.content->>'imageUrl' AS fallback,r.content->>'name' AS name,a.color_value,a.alt_text,o.object_key FROM products p LEFT JOIN product_revisions r ON r.id=p.published_revision LEFT JOIN media_assets a ON a.product_id=p.id AND a.status='READY' LEFT JOIN media_objects o ON o.asset_id=a.id AND o.variant='thumbnail' WHERE p.id IN ("+marks+") ORDER BY p.id,a.is_primary DESC,a.display_order,a.created_at,a.id",productIds.toArray());
+        var byProduct=new HashMap<UUID,List<Map<String,Object>>>();
+        for(var row:rows)byProduct.computeIfAbsent((UUID)row.get("product_id"),ignored->new ArrayList<>()).add(row);
+        var result=new HashMap<UUID,Map<String,Object>>();
+        for(var entry:productsByVariant.entrySet()) {
+            var candidates=byProduct.getOrDefault(entry.getValue(),List.of());
+            if(candidates.isEmpty())continue;
+            boolean assigned=candidates.stream().anyMatch(row->row.get("color_value")!=null);
+            String color=colorsByVariant.get(entry.getKey());
+            var chosen=candidates.stream().filter(row->row.get("object_key")!=null && (!assigned || Objects.equals(row.get("color_value"),color))).findFirst().orElse(null);
+            var line=new LinkedHashMap<String,Object>();
+            line.put("thumbnailUrl",chosen==null?(assigned?null:candidates.getFirst().get("fallback")):publicUrl(chosen.get("object_key").toString()));
+            line.put("imageAlt",chosen==null?Objects.toString(candidates.getFirst().get("name"),"Producto Blessrom"):Objects.toString(chosen.get("alt_text"),Objects.toString(chosen.get("name"),"Producto Blessrom")));
+            result.put(entry.getKey(),line);
+        }
+        return result;
+    }
+
     public record StartUpload(@NotBlank @Size(max=255) String filename,@Size(max=300) String altText,
         @Pattern(regexp="DESKTOP|MOBILE") String role) {
         public StartUpload(String filename,String altText) { this(filename,altText,null); }
