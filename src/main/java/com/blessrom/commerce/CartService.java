@@ -33,6 +33,9 @@ public class CartService {
         return result;
     }
     public Map<String,Object> set(UUID id,String token,UUID variant,int quantity) {
+        return set(id,token,variant,quantity,null);
+    }
+    public Map<String,Object> set(UUID id,String token,UUID variant,int quantity,UUID mediaAssetId) {
         var cart=authorize(id,token,true);active(cart);
         if(quantity<1||quantity>100) throw new Problem(400,"INVALID_QUANTITY","La cantidad debe estar entre 1 y 100.");
         var item=db.one("SELECT v.*,p.archived,r.content FROM variants v JOIN products p ON p.id=v.product_id LEFT JOIN product_revisions r ON r.id=p.published_revision WHERE v.id=?",variant);
@@ -40,7 +43,13 @@ public class CartService {
         var existing=db.rows("SELECT 1 FROM cart_items WHERE cart_id=? AND variant_id=?",id,variant);
         if(existing.isEmpty()&&((Number)db.one("SELECT count(*) AS n FROM cart_items WHERE cart_id=?",id).get("n")).intValue()>=50)
             throw Problem.conflict("CART_LIMIT","El carrito admite hasta 50 variantes.");
-        db.execute("INSERT INTO cart_items(cart_id,variant_id,quantity) VALUES(?,?,?) ON CONFLICT(cart_id,variant_id) DO UPDATE SET quantity=EXCLUDED.quantity",id,variant,quantity);
+        if(mediaAssetId!=null) {
+            var selected=enabled(item);
+            String color=selected.attributes().entrySet().stream().filter(entry->"color".equalsIgnoreCase(entry.getKey())).map(Map.Entry::getValue).findFirst().orElse(null);
+            if(db.rows("SELECT id FROM media_assets WHERE id=? AND product_id=? AND status='READY' AND (color_value IS NULL OR color_value=?) AND (variant_sku IS NULL OR variant_sku=?)",mediaAssetId,item.get("product_id"),color,item.get("sku")).isEmpty())
+                throw new Problem(400,"INVALID_PRODUCT_IMAGE","La fotografía no corresponde a la variante seleccionada.");
+        }
+        db.execute("INSERT INTO cart_items(cart_id,variant_id,quantity,media_asset_id) VALUES(?,?,?,?) ON CONFLICT(cart_id,variant_id) DO UPDATE SET quantity=EXCLUDED.quantity,media_asset_id=COALESCE(EXCLUDED.media_asset_id,cart_items.media_asset_id)",id,variant,quantity,mediaAssetId);
         return get(id,token);
     }
     public void remove(UUID id,String token,UUID variant) {
@@ -53,23 +62,26 @@ public class CartService {
             .orElseThrow(()->Problem.conflict("UNAVAILABLE_PRODUCT","Hay variantes no disponibles."));
     }
     List<Map<String,Object>> lines(UUID id,boolean strict) {
-        var rows=db.rows("SELECT ci.variant_id,ci.quantity,v.sku,p.id AS product_id,p.archived,p.published_revision,r.content,i.on_hand-i.reserved AS available FROM cart_items ci JOIN variants v ON v.id=ci.variant_id JOIN products p ON p.id=v.product_id LEFT JOIN product_revisions r ON r.id=p.published_revision JOIN inventory i ON i.variant_id=v.id WHERE ci.cart_id=? ORDER BY ci.variant_id",id);
+        var rows=db.rows("SELECT ci.variant_id,ci.quantity,ci.media_asset_id,v.sku,p.id AS product_id,p.archived,p.published_revision,r.content,i.on_hand-i.reserved AS available FROM cart_items ci JOIN variants v ON v.id=ci.variant_id JOIN products p ON p.id=v.product_id LEFT JOIN product_revisions r ON r.id=p.published_revision JOIN inventory i ON i.variant_id=v.id WHERE ci.cart_id=? ORDER BY ci.variant_id",id);
         var variantProducts=new LinkedHashMap<UUID,UUID>();
         var variantColors=new HashMap<UUID,String>();
+        var variantSkus=new HashMap<UUID,String>();
         for(var row:rows) {
             UUID variantId=(UUID)row.get("variant_id");
             variantProducts.put(variantId,(UUID)row.get("product_id"));
+            variantSkus.put(variantId,Objects.toString(row.get("sku"),""));
             if(row.get("content")!=null) {
                 var draft=json.read(row.get("content"),Api.Draft.class);
                 draft.variants().stream().filter(v->Objects.equals(v.sku(),row.get("sku"))).findFirst().ifPresent(v->
                     v.attributes().forEach((key,value)->{if("color".equalsIgnoreCase(key))variantColors.put(variantId,value);}));
             }
         }
-        var thumbnails=media.cartThumbnails(variantProducts,variantColors);
+        var thumbnails=media.cartThumbnails(variantProducts,variantColors,variantSkus);
         var result=new ArrayList<Map<String,Object>>();
         for(var row:rows) {
             var line=new LinkedHashMap<String,Object>();
             line.put("productId",row.get("product_id"));line.putAll(thumbnails.getOrDefault(row.get("variant_id"),Map.of()));
+            if(row.get("media_asset_id") instanceof UUID assetId)line.putAll(media.selectedCartThumbnail(assetId,(UUID)row.get("product_id")));
             line.put("variantId",row.get("variant_id"));line.put("sku",row.get("sku"));line.put("quantity",row.get("quantity"));
             try {
                 var variant=enabled(row);var draft=json.read(row.get("content"),Api.Draft.class);

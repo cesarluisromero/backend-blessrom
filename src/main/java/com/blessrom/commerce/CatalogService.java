@@ -379,7 +379,7 @@ public class CatalogService {
         return Map.of("items",items);
     }
     private List<Map<String,Object>> publicMedia(UUID productId) {
-        var assets=db.rows("SELECT id,alt_text,is_primary,color_value FROM media_assets WHERE product_id=? AND status='READY' ORDER BY is_primary DESC,display_order,created_at,id",productId);
+        var assets=db.rows("SELECT id,alt_text,is_primary,color_value,variant_sku FROM media_assets WHERE product_id=? AND status='READY' ORDER BY is_primary DESC,display_order,created_at,id",productId);
         for(var asset:assets) {
             var urls=new LinkedHashMap<String,String>();
             for(var object:db.rows("SELECT variant,object_key FROM media_objects WHERE asset_id=? ORDER BY variant",asset.get("id")))

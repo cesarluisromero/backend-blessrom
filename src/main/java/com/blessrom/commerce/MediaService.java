@@ -56,11 +56,11 @@ public class MediaService {
     }
 
     /** Cart images follow the selected variant's color gallery. */
-    public Map<UUID,Map<String,Object>> cartThumbnails(Map<UUID,UUID> productsByVariant,Map<UUID,String> colorsByVariant) {
+    public Map<UUID,Map<String,Object>> cartThumbnails(Map<UUID,UUID> productsByVariant,Map<UUID,String> colorsByVariant,Map<UUID,String> skusByVariant) {
         if(productsByVariant.isEmpty())return Map.of();
         var productIds=new HashSet<>(productsByVariant.values());
         String marks=String.join(",",Collections.nCopies(productIds.size(),"?"));
-        var rows=db.rows("SELECT p.id AS product_id,r.content->>'imageUrl' AS fallback,r.content->>'name' AS name,a.color_value,a.alt_text,o.object_key FROM products p LEFT JOIN product_revisions r ON r.id=p.published_revision LEFT JOIN media_assets a ON a.product_id=p.id AND a.status='READY' LEFT JOIN media_objects o ON o.asset_id=a.id AND o.variant='thumbnail' WHERE p.id IN ("+marks+") ORDER BY p.id,a.is_primary DESC,a.display_order,a.created_at,a.id",productIds.toArray());
+        var rows=db.rows("SELECT p.id AS product_id,r.content->>'imageUrl' AS fallback,r.content->>'name' AS name,a.color_value,a.variant_sku,a.alt_text,o.object_key FROM products p LEFT JOIN product_revisions r ON r.id=p.published_revision LEFT JOIN media_assets a ON a.product_id=p.id AND a.status='READY' LEFT JOIN media_objects o ON o.asset_id=a.id AND o.variant='thumbnail' WHERE p.id IN ("+marks+") ORDER BY p.id,a.is_primary DESC,a.display_order,a.created_at,a.id",productIds.toArray());
         var byProduct=new HashMap<UUID,List<Map<String,Object>>>();
         for(var row:rows)byProduct.computeIfAbsent((UUID)row.get("product_id"),ignored->new ArrayList<>()).add(row);
         var result=new HashMap<UUID,Map<String,Object>>();
@@ -69,12 +69,24 @@ public class MediaService {
             if(candidates.isEmpty())continue;
             boolean assigned=candidates.stream().anyMatch(row->row.get("color_value")!=null);
             String color=colorsByVariant.get(entry.getKey());
-            var chosen=candidates.stream().filter(row->row.get("object_key")!=null && (!assigned || Objects.equals(row.get("color_value"),color))).findFirst().orElse(null);
+            String sku=skusByVariant.get(entry.getKey());
+            var matching=candidates.stream().filter(row->row.get("object_key")!=null && (!assigned || Objects.equals(row.get("color_value"),color))).toList();
+            var chosen=matching.stream().filter(row->Objects.equals(row.get("variant_sku"),sku)).findFirst().orElseGet(()->matching.stream().filter(row->row.get("variant_sku")==null).findFirst().orElse(null));
             var line=new LinkedHashMap<String,Object>();
             line.put("thumbnailUrl",chosen==null?(assigned?null:candidates.getFirst().get("fallback")):publicUrl(chosen.get("object_key").toString()));
             line.put("imageAlt",chosen==null?Objects.toString(candidates.getFirst().get("name"),"Producto Blessrom"):Objects.toString(chosen.get("alt_text"),Objects.toString(chosen.get("name"),"Producto Blessrom")));
             result.put(entry.getKey(),line);
         }
+        return result;
+    }
+
+    public Map<String,Object> selectedCartThumbnail(UUID assetId,UUID productId) {
+        var rows=db.rows("SELECT o.object_key,a.alt_text FROM media_assets a JOIN media_objects o ON o.asset_id=a.id AND o.variant='thumbnail' WHERE a.id=? AND a.product_id=? AND a.status='READY'",assetId,productId);
+        if(rows.isEmpty())return Map.of();
+        var row=rows.getFirst();
+        var result=new LinkedHashMap<String,Object>();
+        result.put("thumbnailUrl",publicUrl(row.get("object_key").toString()));
+        result.put("imageAlt",Objects.toString(row.get("alt_text"),"Producto Blessrom"));
         return result;
     }
 
@@ -85,8 +97,8 @@ public class MediaService {
     public record UploadedObject(@NotBlank @Pattern(regexp="original|large|medium|thumbnail") String variant,
         @Min(1) @Max(10000) int width,@Min(1) @Max(10000) int height,@Min(1) @Max(10_485_760) long byteSize) {}
     public record CompleteUpload(@NotNull @Size(min=4,max=4) List<@NotNull @Valid UploadedObject> objects) {}
-    public record UpdateMedia(@Size(max=300) String altText,Boolean primary,String colorValue) {
-        public UpdateMedia(String altText,Boolean primary) { this(altText,primary,null); }
+    public record UpdateMedia(@Size(max=300) String altText,Boolean primary,String colorValue,String variantSku) {
+        public UpdateMedia(String altText,Boolean primary) { this(altText,primary,null,null); }
     }
     public record MediaOrder(@NotNull @Size(min=1,max=50) List<@NotNull UUID> assetIds) {}
 
@@ -252,7 +264,18 @@ public class MediaService {
                 WHERE lower(a.key)='color' AND a.value=? LIMIT 1
                 """,productId,productId,color).isEmpty())
                 throw new Problem(400,"INVALID_MEDIA_COLOR","Guarda primero una variante con este color.");
-            db.execute("UPDATE media_assets SET color_value=? WHERE id=?",color,assetId);
+            db.execute("UPDATE media_assets SET color_value=?,variant_sku=CASE WHEN color_value IS NOT DISTINCT FROM ? THEN variant_sku ELSE NULL END WHERE id=?",color,color,assetId);
+        }
+        if(input.variantSku()!=null) {
+            String sku=input.variantSku().isBlank()?null:input.variantSku().trim();
+            if(sku!=null && db.rows("SELECT 1 FROM variants WHERE product_id=? AND sku=?",productId,sku).isEmpty())
+                throw new Problem(400,"INVALID_MEDIA_VARIANT","Guarda primero la variante seleccionada.");
+            if(sku!=null && db.rows("SELECT 1 FROM product_drafts d CROSS JOIN LATERAL jsonb_array_elements(d.content->'variants') v WHERE d.product_id=? AND v->>'sku'=? UNION ALL SELECT 1 FROM products p JOIN product_revisions r ON r.id=p.published_revision CROSS JOIN LATERAL jsonb_array_elements(r.content->'variants') v WHERE p.id=? AND v->>'sku'=? LIMIT 1",productId,sku,productId,sku).isEmpty())
+                throw new Problem(400,"INVALID_MEDIA_VARIANT","La variante no figura en el producto guardado.");
+            String imageColor=(String)current.get("color_value");
+            if(sku!=null&&imageColor!=null&&db.rows("SELECT 1 FROM (SELECT content FROM product_drafts WHERE product_id=? UNION ALL SELECT r.content FROM products p JOIN product_revisions r ON r.id=p.published_revision WHERE p.id=?) saved CROSS JOIN LATERAL jsonb_array_elements(saved.content->'variants') v CROSS JOIN LATERAL jsonb_each_text(v->'attributes') a WHERE v->>'sku'=? AND lower(a.key)='color' AND a.value=? LIMIT 1",productId,productId,sku,imageColor).isEmpty())
+                throw new Problem(400,"INVALID_MEDIA_VARIANT","La presentación no corresponde al color de la imagen.");
+            db.execute("UPDATE media_assets SET variant_sku=? WHERE id=?",sku,assetId);
         }
         if(Boolean.TRUE.equals(input.primary())) {
             db.execute("UPDATE media_assets SET is_primary=false WHERE product_id=? AND status='READY' AND is_primary",productId);

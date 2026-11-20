@@ -77,7 +77,9 @@ public final class Api {
         @NotNull @DecimalMin("0") @Digits(integer=8,fraction=2) BigDecimal minimumSubtotal,
         @Min(1) Integer usageLimit,@NotNull Instant startsAt,@NotNull Instant endsAt,boolean active) {}
     public record UpdatePromotion(@Min(0) long version,@NotNull @Valid Promotion promotion) {}
-    public record Quantity(@Min(1) @Max(100) int quantity) {}
+    public record Quantity(@Min(1) @Max(100) int quantity, UUID mediaAssetId) {
+        public Quantity(int quantity) { this(quantity,null); }
+    }
     @RegisterForReflection
     public record AssistantTurn(
         @NotBlank @Pattern(regexp="user|assistant") String role,
