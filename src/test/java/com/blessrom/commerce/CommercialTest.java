@@ -46,6 +46,17 @@ class CommercialTest {
         var quote=carts.quote(id,token,f.district);
         return new Basket(id,token,new Api.Checkout("Cliente de prueba","cliente@example.com","999999999","Dirección de prueba",f.district,quote.get("fingerprint").toString()));
     }
+    @Test void sameSubcategoryNameCanExistUnderDifferentParents() {
+        String suffix=UUID.randomUUID().toString();
+        UUID firstParent=(UUID)catalog.createCategory(new Api.Category("Niños","ninos-"+suffix)).get("id");
+        UUID secondParent=(UUID)catalog.createCategory(new Api.Category("Mujer","mujer-"+suffix)).get("id");
+        var first=catalog.createCategory(new Api.Category("BVD","bvd",firstParent,"",0,true));
+        var second=catalog.createCategory(new Api.Category("BVD","bvd",secondParent,"",0,true));
+        assertNotEquals(first.get("slug"),second.get("slug"));
+        assertEquals(secondParent,second.get("parent_id"));
+        var duplicate=assertThrows(Problem.class,()->catalog.createCategory(new Api.Category("BVD","otro-bvd-"+suffix,secondParent,"",0,true)));
+        assertEquals("CATEGORY_ALREADY_EXISTS",duplicate.code);
+    }
     @Test void draftsStayPrivateAndPublishedRevisionsAreImmutable() {
         var f=fixture(4);
         long revisions=((Number)db.one("SELECT count(*) AS n FROM product_revisions WHERE product_id=?",f.product).get("n")).longValue();

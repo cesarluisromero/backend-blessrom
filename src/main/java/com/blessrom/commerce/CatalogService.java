@@ -33,7 +33,7 @@ public class CatalogService {
             var parent=db.one("SELECT slug FROM categories WHERE id=? FOR UPDATE",input.parentId());
             parentSlug=String.valueOf(parent.get("slug"));
         }
-        if(!db.rows("SELECT id FROM categories WHERE parent_id IS NOT DISTINCT FROM ? AND lower(name)=lower(?) LIMIT 1",input.parentId(),input.name().trim()).isEmpty())
+        if(input.parentId()!=null&&!db.rows("SELECT id FROM categories WHERE parent_id=? AND lower(name)=lower(?) LIMIT 1",input.parentId(),input.name().trim()).isEmpty())
             throw Problem.conflict("CATEGORY_ALREADY_EXISTS","Ya existe una categoría con ese nombre dentro de la categoría principal seleccionada.");
         String slug=input.slug();
         if(!db.rows("SELECT id FROM categories WHERE slug=?",slug).isEmpty()) {
