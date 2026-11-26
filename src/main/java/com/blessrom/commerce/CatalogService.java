@@ -28,10 +28,26 @@ public class CatalogService {
     public List<Map<String,Object>> adminCategories() { return db.rows("SELECT * FROM categories ORDER BY display_order,name"); }
     public Map<String,Object> createCategory(Api.Category input) {
         UUID id=UUID.randomUUID();
-        if(input.parentId()!=null) db.one("SELECT id FROM categories WHERE id=?",input.parentId());
-        db.execute("INSERT INTO categories(id,name,slug,parent_id,description,display_order,active) VALUES(?,?,?,?,?,?,?)",id,input.name(),input.slug(),input.parentId(),
-            Objects.requireNonNullElse(input.description(),""),Objects.requireNonNullElse(input.displayOrder(),0),Objects.requireNonNullElse(input.active(),true));
-        return db.one("SELECT * FROM categories WHERE id=?",id);
+        String parentSlug=null;
+        if(input.parentId()!=null) {
+            var parent=db.one("SELECT slug FROM categories WHERE id=? FOR UPDATE",input.parentId());
+            parentSlug=String.valueOf(parent.get("slug"));
+        }
+        if(!db.rows("SELECT id FROM categories WHERE parent_id IS NOT DISTINCT FROM ? AND lower(name)=lower(?) LIMIT 1",input.parentId(),input.name().trim()).isEmpty())
+            throw Problem.conflict("CATEGORY_ALREADY_EXISTS","Ya existe una categoría con ese nombre dentro de la categoría principal seleccionada.");
+        String slug=input.slug();
+        if(!db.rows("SELECT id FROM categories WHERE slug=?",slug).isEmpty()) {
+            if(parentSlug==null)throw Problem.conflict("CATEGORY_SLUG_EXISTS","El identificador URL ya pertenece a otra categoría.");
+            slug=(parentSlug+"-"+input.slug());
+        }
+        String base=slug.substring(0,Math.min(slug.length(),100)).replaceAll("-+$","");
+        for(int suffix=1;suffix<=1000;suffix++) {
+            String candidate=suffix==1?base:base.substring(0,Math.min(base.length(),100-("-"+suffix).length()))+"-"+suffix;
+            if(db.execute("INSERT INTO categories(id,name,slug,parent_id,description,display_order,active) VALUES(?,?,?,?,?,?,?) ON CONFLICT (slug) DO NOTHING",id,input.name().trim(),candidate,input.parentId(),
+                Objects.requireNonNullElse(input.description(),""),Objects.requireNonNullElse(input.displayOrder(),0),Objects.requireNonNullElse(input.active(),true))==1)
+                return db.one("SELECT * FROM categories WHERE id=?",id);
+        }
+        throw Problem.conflict("CATEGORY_SLUG_EXISTS","No se pudo asignar un identificador URL disponible a la categoría.");
     }
     public List<Map<String,Object>> collections(boolean admin) {
         if(!admin)return db.rows("SELECT c.* FROM collections c WHERE c.active=true AND (c.starts_at IS NULL OR c.starts_at<=now()) AND (c.ends_at IS NULL OR c.ends_at>now()) AND EXISTS ("+SELLABLE_PRODUCT+" AND COALESCE(r.content->'collectionIds','[]'::jsonb) @> jsonb_build_array(c.id::text)) ORDER BY c.display_order,c.name");
